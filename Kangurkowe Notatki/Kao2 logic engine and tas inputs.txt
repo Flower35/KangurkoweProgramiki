@@ -1,0 +1,1152 @@
+
+================================================================
+== KAO2 logic engine and TAS inputs
+================================================================
+
+(2021-11-08)
+ * wyszukiwanie funkcji w której można podjebać inputy
+  (przepraszam za słownictwo, zwykle tak nie piszę w notatkach)
+
+(2021-11-09)
+ * kod na Replay działał, dodałem kod na Record
+ * optymalizacja kodu (w oryginale byŁo podwójne sprawdzanie
+  na NULL: przed i po wejściu do podfunkcji od inputów)
+
+(2021-11-10)
+ * spisanie dużej liczby offsetów i funkcji
+  (ogarnianie renderowanka w silniku Elephant)
+
+(2021-11-11)
+ * Wygenerowanie przykładów działania krokowej aktualizacji
+  silnika gry (jeden krok nie może być więszy niż 0.03334 sekund)
+ * Algorytm synchronizacji ("ZAWSZE I TYLKO") inputów w trybie 30 FPS
+ * Drugi algorytm synchronizacji co "0.5" anim-klatki.
+
+(2021-11-12)
+ * Fix dla "eAnimNotyfier" - oryginalny warunek sprawiał
+  że dla anim-frame-kroków "<= 1.0" notyfikacja mogła zostać
+  wysłana dwukrotnie (np. Kao wyrzucał dwa boomerangi)
+
+
+================================================================
+== Renderowanie
+================================================================
+
+--------------------------------
+(Logical & Rendering Engine, part 1 - boot)
+
+<kao2.005A5632> # Entry point
+  005A5710 -- CALL 005AC1D0
+
+<kao2.005AC1D0> # "starting tate::elephant"
+  005AC230 -- CALL 0048F4D0
+
+<kao2.0048F4D0>
+  004900AC -- PUSH 004902D0
+  004900B1 -- CALL <JMP.&glut32.glutDisplayFunc>
+
+<kao2.004902D0> # "GLUT display callback function"
+## "QueryPerformanceFrequency" zwróciło u mnie "10000000.0 counts per second"
+  0049030C -- CALL 0048F140 ;; "QueryPerformanceCounter"
+    ;; (DWORD) 006267A0 = prevQPC low
+    ;; (DWORD) 006267A4 = prevQPC high
+    ;; diff := (DWORD) (currentQPC - prevQPC)
+    ;; (FLOAT) seconds := ((FLOAT) diff / QPF)
+    ;; min = 0x38D1B717 = 0.0001f = "0.1 ms" = "100 us"
+    ;; max = 0x3DCCCCCD = 0.1f = "100 ms" = "100000 us"
+  004903F6 -- MOV EDX,DWORD PTR DS:[6267CC]
+  004903FC -- MOV EAX,DWORD PTR DS:[EDX]
+  004903FE -- MOV ECX,DWORD PTR DS:[6267CC]
+  00490404 -- CALL DWORD PTR DS:[EAX+38]
+
+<kao2.00409A00> # (ECX: eKao2Gamelet)
+  00409A54 -- CALL 004C5CC0
+
+<kao2.004C5CC0> # (ECX: eKao2Gamelet, Arg1: float)
+## Arg1 = Czas od poprzedniego "glutDisplayFunc" w sekundach
+## (nie mniej niż "0.1 ms" i nie więcej niż "100 ms")
+  004C5CF0 -- MOV EAX,DWORD PTR SS:[ESP+8]
+  004C5CF4 -- PUSH EAX
+  004C5CF7 -- CALL 0048C180
+
+<kao2.0048C180> # (ECX: eKao2Gamelet, Arg1: float)
+## Patrz część druga!
+  0048C198 -- CALL 004919E0
+
+<kao2.004919E0> # "source/engine/pad.cpp"
+
+--------------------------------
+(Logical & Rendering Engine, part 2 - onTick loop)
+
+<kao2.0048C180> # (ECX: eKao2Gamelet, Arg1: float)
+## Arg1 = czas od startu poprzedniego DisplayCallback
+##  do startu obecnego DisplayCall, w sekundach
+    ;; (FLOAT) 0062659C := Arg1 (stored for debug)
+  0048C198 -- CALL 004919E0  ;; stan inputów
+    ;; num_of_steps := ftol(ceil(Gamelet[0x10] * Arg1 * 25.0))
+    ;; Gamelet[0x0364] := (Arg1 / (FLOAT) num_of_steps)
+    ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+    ;; Dzwoni do <kao2.00407C30> od 1 do 3 razy,
+    ;; korzystając z tych samych inputów per update (!)
+    ```
+    float   Gamelet_0010; // AnimRate. (default 1.0f)
+    float   Gamelet_0360; // Total time since the beginning of the level.
+    float   Gamelet_0364; // Single frame time in seconds.
+
+    float   delta;        // Time in seconds since the beginning
+                          //  of the last "display callback" (game loop)
+                          //  to the beginning of current game loop.
+    float   delta_anim;   // Delta time affected by Anim Rate
+    int32_t steps;        // Number of sub-updates (using the same input state!).
+    float   step_time;    // Single frame time in seconds.
+
+    delta_anim   = Gamelet_0010 * delta;
+    steps        = ftol(ceil(delta_anim * 25.0));
+    step_time    = delta_anim / steps;
+    Gamelet_0364 = step_time;
+
+    for (int i = 0; i < steps; i++)
+    {
+      Gamelet_0360 += Gamelet_0364;
+      Gamelet.func_00407C30(step_time, Gamelet_0364);
+    }
+    ```
+  0048C244 -- CALL DWORD PTR DS:[EAX+4C] (00407C30)
+    ;; Następnie renderowanie i "eMenu"
+  0048C24E -- CALL DWORD PTR DS:[EAX+50] (00407BC0)
+
+<kao2.00407C30> # (ECX: eKao2Gamelet, Arg1: float, Arg2: float)
+## Arg1 = ZAWSZE "<= 0.03333334" ("<= CONST 1/30.")
+##  = Czas obecnej klatki w sekundach
+## Arg2 = Total liczba sekund od początku poziomu
+  00407C3A -- CALL 004C59A0
+    004C59B0 -- JMP 0048BBD0
+
+<kao2.0048BBD0> # (ECX: eKao2Gamelet, Arg1: float, Arg2: float)
+## Mnoży argumenty przez "30.0" (zamienia sekundy na klatki)
+  0048BBD5 -- CALL 0048F160 ;; "QueryPerformanceCounter"
+    ;; (FLOAT) ([gamelet + 0x08] + 0x75) := total time in frames
+    ;; [gamelet + 0x0C] = current eScene
+  0048BC08 -- CALL 00498C60
+  0048BC0F -- CALL 0048F170
+    ;; (FLOAT) 00624868 = seconds elapsed since last frame (for debug only)
+
+<kao2.0048F170> # (Arg1: DWORD, Arg2: DWORD)
+## Arg1: INT64 low
+## Arg2: INT64 high
+  0048F176 -- CALL 0048F140 ;; "QueryPerformanceCounter" (EDX:EAX)
+    ;; DWORD diff := (DWORD) (new QPC - arg)
+    ;; return (((FLOAT) diff) / 10000000.0)
+
+<kao2.00498C60> # (ECX: eScene, Arg1: float, Arg2: float)
+## Arg1 = ZAWSZE "<= 1.0" = Czas jaki minął dla tej klatki
+## Arg2 = Total liczba klatek od początku poziomu
+  00498C91 -- CALL 004861D0
+
+<kao2.00482E50> # (ECX: eNode)
+  00482EC5 -- CALL DWORD PTR DS:[EDX+38]
+
+<kao2.004861D0> # (ECX: ePivot)
+  0048621B -- CALL 004B6C80
+  00486403 -- CALL 00482E50
+
+<kao2.004B6C80> # (ECX: eAnimate)
+  004B6C80 -- FLD DWORD PTR SS:[ESP+4]
+  ;; Można zamienić prostym hackiem na "FLD1"
+
+--------------------------------
+(Logical & Rendering Engine, part 3 - main menu)
+
+<kao2.0048C180> # (ECX: eKao2Gamelet, Arg1: float)
+  0048C24E -- CALL DWORD PTR DS:[EAX+50] (00407BC0)
+
+<kao2.00407BC0> # (ECX: eKao2Gamelet)
+  00407BF8 -- CALL DWORD PTR DS:[EDX+3C] (005428B0)
+
+<kao2.005428B0> # (ECX: eMenu)
+  (...)
+
+--------------------------------
+
+
+================================================================
+== Fajna Symulacja `eKao2Gamelet::tick()` w Python
+================================================================
+
+    ```
+    import math
+
+    def render_stats(delta, anim_rate):
+      anim_delta = anim_rate * delta
+      updates = math.ceil(anim_delta * 25.0)
+      step_time = anim_delta / updates
+      fps_real = f'{(1.0 / delta):.2f}'
+      fps_anim = f'{(1.0 / anim_delta):.2f}' # (anim_rate / delta)
+      anim_frames = (30.0 * step_time)
+      total_frames = updates * anim_frames
+      print(f'| ar: {anim_rate:.2f} | dt: {delta:.5f} s ({fps_real:>8s} FPS) | adt: {anim_delta:.5f} s ({fps_anim:>8s} FPS) | steps: {updates} | st: {step_time:.5f} s | frames: {anim_frames:.5f} / {total_frames:.5f} |')
+
+    def example_stats():
+      line = ' ' + ('-' * (80 + 40 + 8))
+      print()
+      print(line)
+      print('| ar: Anim Rate | dt: Display Callback Delta Time | adt: Anim Delta Time | st: Step Time |')
+      print('| steps: Anim Steps Per Callback | frames: Frames advanced in Callback (per step / per callback) |')
+      for rate in (0.25, 0.5, 1.0, 2.0, 3.0):
+        print(line)
+        for delta in (0.0001, 0.001, (1/30), 0.1):
+          # print(line)
+          # print(line)
+          render_stats(delta, rate)
+      # print(line)
+      # print(line)
+      print(line)
+      print()
+
+    example_stats()
+    ```
+
+================================================================
+== Głupia Symulacja `eAnimNotyfier::update(eAnimate)` w Python
+================================================================
+
+    ```
+    def frameNotifierSim(startTime, stepTime, target):
+      line = '-' * (64 + 32)
+      print(line)
+      prevTime = startTime
+      print(f'(target time: {target:.2f})')
+      print(f'|  PT  |  CT  | P < T | P <= T | P >= T | P > T | C < T | C <= T | C >= T | C > T |')
+      repeat = 0
+      while (repeat < 2):
+        curTime = prevTime + stepTime
+        c01 = str(f'{prevTime:.2f}')
+        c02 = str(f'{curTime:.2f}')
+        c03 = '+' if (prevTime <  target) else ' '
+        c04 = '+' if (prevTime <= target) else ' '
+        c05 = '+' if (prevTime >= target) else ' '
+        c06 = '+' if (prevTime  > target) else ' '
+        c07 = '+' if ( curTime <  target) else ' '
+        c08 = '+' if ( curTime <= target) else ' '
+        c09 = '+' if ( curTime >= target) else ' '
+        c10 = '+' if ( curTime  > target) else ' '
+        s01 = f'| {c01:^4s} | {c02:^4s} '
+        s02 = f'| {c03:^5s} | {c04:^6s} | {c05:^6s} | {c06:^5s} '
+        s03 = f'| {c07:^5s} | {c08:^6s} | {c09:^6s} | {c10:^5s} '
+        print(s01 + s02 + s03 + '|')
+        prevTime = curTime
+        if (prevTime >= target):
+            repeat += 1
+      print(line)
+
+    def testing():
+      frameNotifierSim(0.00, 0.25, 1.00)
+      frameNotifierSim(0.20, 0.25, 1.00)
+      frameNotifierSim(0.00, 0.50, 1.00)
+      frameNotifierSim(0.35, 0.50, 1.00)
+      frameNotifierSim(0.50, 0.50, 1.00)
+      frameNotifierSim(0.65, 0.50, 1.00)
+      frameNotifierSim(0.00, 1.00, 2.00)
+      frameNotifierSim(0.25, 1.00, 2.00)
+      frameNotifierSim(0.50, 1.00, 2.00)
+
+    testing()
+    ```
+
+
+================================================================
+== Priorytety dla Kao (jak w przyszłości ogarnie się TAS-owanie)
+================================================================
+
+--------------------------------
+-- Menu Główne
+
+ * Jeśli w klatce są inputy [MENU] lub [START]
+  to oczywiście przerywamy grę i wchodzimy.
+
+ * W tej samej klatce mogą być trzymane kierunki i akcja.
+
+ * Podczas wchodzenia do menu, kierunki i akcja mogą być
+  dopiero co wciśnięte razem z [START], lub TRYMANE WCZEŚNIEJ,
+  a "eMenu" zaakceptuje je na tą jedną klatkę
+  (dwie klatki to już trzymanie inputów).
+
+ * Najpierw sprawdany jest kierunek,
+  można przesuwać się tylko co drugą katkę!
+
+ * Potem sprawdzana jest akcja (np. [JUMP] lub [THROW]),
+  można wybierać opcje w menu tylko co drugą klatkę...
+  (ok ile razy mam to powtarzać, starczy XD)
+
+ * [THROW] ma priorytet przed [JUMP]
+  - klatka [START + x + t] jednocześnie wchodzi i wychodzi
+  - podobnie klatki [START + x] [t], [START] [x + t].
+  - [x + t] nie akceptuje opcji tylko wychodzi (ignoruje [JUMP])
+
+ * Wciskanie klawisza [ENTER] na klawiaturze (niezależnie
+  od przypisanego bingingu) ma takie samo zastosowanie
+  jak wciskanie [JUMP], flaga dla DirectInput "DIK_ENTER"
+  jest po prostu odczytywana niezależnie i dokonywana
+  jest logiczna alternatywa inputów. Ma razie mój programik
+  "KAO2_TAS" tego warunku NIE przechwytuje :)
+
+ * Podobnie wciskanie klawisza [ESC] na klawiaturze
+  działa w alternatywie z [START] niezależnie od tego
+  czy pod [ESC] jest jeszcze cokolwiek zbindowane.
+
+--------------------------------
+
+
+================================================================
+== Misc funkcje i offsety
+================================================================
+
+--------------------------------
+-- Misc function calls
+
+# pierwsze odpalenie gry - aktualizacja inputów na ekranie ładowania
+00409EBF -- CALL 004919E0
+
+# po załadowaniu poziomu - aktualizacja inputów w grze lub w menu głównym
+0048C198 -- CALL 004919E0
+
+# Tutaj "source/engine/pad" odczytuje stan z klawiszy strzałek
+# (ZNACZNIE RZADZIEJ NIŻ NORMALNE INPUTY?)
+<kao2.0049165B>
+
+# testowe BREAKPOINTY: [JUMP] lub [ENTER] wciśnięty w Main Menu
+00547485 -- MOV DWORD PTR DS:[ESI+50],1
+0054737F -- MOV EAX,DWORD PTR DS:[ESI+50]
+
+--------------------------------
+-- "Gadget::ePadGadget::ePadGadgetSim"
+
+<kao2.004CBE4F>
+ * `pad.sequence = "60 1x60 1x60 1o"`
+
+--------------------------------
+-- eKao2Gamelet and time...
+
+(FLOAT) Gamelet[0010] # AnimSpeed. (zawsze "1.0f", chyba że sam ustawisz XD!)
+  ([006267CC]+10)
+
+(FLOAT) Gamelet[0360] # Total liczba sekund od początku poziomu.
+  ([006267CC]+0360)   #  Używana przy renderowaniu particles.
+
+(FLOAT) Gamelet[0364] # Czas aktualnej klatki w sekundach. (Odwrotność FPS)
+  ([006267CC]+0364)   #  Oryginalnie ma zastosowanie tylko w func 0048C180,
+                      #  poza tym mogli po prostu użyć zmiennej lokalnej XD.
+
+(DWORD) Gamelet[0380] # Ile Callback ticków (NIE Anim klatek!)
+  ([006267CC]+0380)   #  przejść dalej, dopóki `0 != (BOOL) Gamelet[0384]`
+                      #  Opcja bezużyteczna bo sync powinien być stały
+                      #  i zależny od czasu Sceny a nie od szybkości PC...
+
+(BOOL) Gamelet[0384] # "isPaused" - Czy Gameplay (updating) jesy zatrzymany,
+  ([006267CC]+0384)  #  wtedy zwykl aktywne jest Menu, chociaż nie jest
+                     #  to warunek konieczny na ustawienie tej flagi ;)
+
+--------------------------------
+-- Bunch of unused DWORDS (inputs-related)
+
+(DWORD) 006269CC
+(DWORD) 006269D0
+(DWORD) 006269D4
+(DWORD) 006269D8
+
+(DWORD) 00626A24
+(DWORD) 00626A28
+  (...)
+
+--------------------------------
+-- "eFloat.incT()" message
+
+(DWORD)[00627080] # (current eScene)
+
+(FLOAT) (DWORD[00627080]+C8)
+  ;; + 0xAC ("eAnimate" inner-struct)
+  ;; + 0x1C ("delta frame time", always "<= 1.0f")
+
+--------------------------------
+-- Gadget Timer updating
+
+<kao2.004861D0> # (ECX: ePivot)
+  0048631F -- CALL DWORD PTR DS:[EDX+8C]  (00571030)
+
+<kao2.00571030> (ECX: Actor)
+  00571037 -- CALL DWORD PTR DS:[EAX+0A4]  (00571040)
+
+<kao2.00571040> (ECX: Actor)
+  00571040 -- PUSH ECX
+  00571041 -- MOV EAX,ECX
+  00571058 -- ADD EAX,0AC
+  0057105E -- PUSH EAX
+  0057105F -- CALL DWORD PTR DS:[EDX+20]  (00595040)
+
+<kao2.00595040> # (ECX: Namespace, Arg1: eAnimate, Arg2: Actor ref)
+  0059505B -- CALL DWORD PTR DS:[EDX+30]
+
+<kao2.0059CA90> # (ECX: eTimer, Arg1: eAnimate)
+  0059CA97 -- MOV EAX,DWORD PTR SS:[ESP+4]
+  0059CA9B -- FLD DWORD PTR DS:[EAX+1C]
+  0059CA9E -- FADD DWORD PTR DS:[ECX+14]
+  0059CAA1 -- FSTP DWORD PTR DS:[ECX+14]
+
+--------------------------------
+-- (source/engine/pad) misc
+
+(BYTE) 00626EA4 # Flaga: czy aktualizować inputy globalne.
+ -> zawsze 0x01, i raczej nigdy się nie zmienia.
+
+(BYTE) 0062B970 # Flaga: czy skok działa globalnie.
+ -> zawsze 0x01, i raczej nigdy się nie zmienia.
+
+--------------------------------
+-- eAnimNotyfier fix for double-notifies
+
+  # Warunki z oryginalnego kodu
+   * pominięcie notify:
+    - (frame < prevTime) || (frame > curTime)
+    - (prevTime > frame) || (curTime < frame)
+   * spełnienie warunku:
+    - (frame >= prevTime) && (frame <= curTime)
+    - (prevTime <= frame) && (curTime >= frame)
+
+  # Poprawiony warunek porównywania numeru klatki
+  #  z poprzednim czasem animacji:
+   * spełnienie warunku:
+    - (prevTime < frame) && (curTime >= frame)
+    - (frame > prevTime) && (frame <= curTime)
+   * pominięcie notify:
+    - (prevTime >= frame) || (curTime < frame)
+    - (frame <= prevTime) || (frame > curTime)
+
+   <kao2.00444C66> # "notifyFrameA()"
+    -> 25 00 01 00 00 0F 85 9B 00 00 00
+    ;; AND EAX,00000100
+    ;; JNZ 00444D0C
+    ;;  Taken if ST(0) < [ESI+18] in preceding FCOM
+    -> F6 C4 41 0F 85 9D 00 00 00 90 90
+    ;; TEST AH,41
+    ;; JNE 00444D0C
+    ;;   Taken if ST(0) <= [ESI+18] in preceding FCOM
+
+   <kao2.00444D16> # "notifyFrameB()"
+    -> 25 00 01 00 00 0F 85 AD 00 00 00
+    ;; AND EAX,00000100
+    ;; JNZ 00444DCE
+    ;;  Taken if ST(0) < [ESI+18] in preceding FCOM
+    -> F6 C4 41 0F 85 AF 00 00 00 90 90
+    ;; TEST AH,41
+    ;; JNE 00444DCE
+    ;;   Taken if ST(0) <= [ESI+18] in preceding FCOM
+
+  # eAnimNotyfier class layout:
+   [0x00]: vptr
+   [0x04]: (DWORD)   refCounter
+   [0x08]: (Actor)   parentActor
+   [0x0C]: (eString) name
+   [0x10]: (DWORD)   frameA (default: `-1`)
+   [0x14]: (DWORD)   frameB (default: `-1`)
+   [0x18]: (FLOAT)   prevTime (default: `0.0`)
+
+--------------------------------
+
+
+================================================================
+== Offsety obsługi sterowania ("source/engine/pad")
+================================================================
+
+(FLOAT) 006269BC # "LX"
+ -> (-1.f): left, (+1.f): right.
+
+(FLOAT) 006269C0 # "LY"
+ -> (-1.f): down, (+1.f): up.
+
+(FLOAT) 006269C4 # "RX"
+ -> (-1.f): left, (+1.f): right.
+
+(FLOAT) 006269C8 # "RY"
+ -> (-1.f): up, (+1.f): down.
+
+"pad.stick()"
+ -> "ePadGadget" flag: 0x00000002
+
+"pad.stickLeft()"
+ -> "ePadGadget" flag: 0x00000004
+
+"pad.stickRight()"
+ -> "ePadGadget" flag: 0x00000008
+
+"pad.stickUp()"
+ -> "ePadGadget" flag: 0x00000010
+
+"pad.stickDown()"
+ -> "ePadGadget" flag: 0x00000020
+
+(DWORD) 006269DC # (0x00) "KF_JUMP" / "pad.cross()"
+ -> (!= 0): Jump.
+ -> "ePadGadget" flag: 0x00000040
+
+(DWORD) 006269E0 # (0x01) "KF_PUNCH" / "pad.circle()"
+ -> (!= 0): Punch.
+ -> "ePadGadget" flag: 0x00000080
+
+(DWORD) 006269E4 # (0x02) "KF_ROLL" / "pad.quad()"
+ -> (!= 0): Roll.
+ -> "ePadGadget" flag: 0x00000100
+
+(DWORD) 006269E8 # (0x03) "KF_THROW" / "pad.tri()"
+ -> (!= 0): Throw.
+ -> "ePadGadget" flag: 0x00000200
+
+(DWORD) 006269EC # (0x04) "KF_STRAFE" / "pad.L2()"
+ -> (!= 0): Side step.
+ -> "ePadGadget" flag: 0x00000800
+
+(DWORD) 006269F0 # (0x05) "KF_FPP" / "pad.R2()"
+ -> (!= 0): First person perspective.
+ -> "ePadGadget" flag: 0x00002000
+
+(DWORD) 006269F4 # (0x06) "KF_L1" / "pad.L1()"
+ -> Unused?
+ -> "ePadGadget" flag: 0x00000400
+
+(DWORD) 006269F8 # (0x07) "KF_R1" / "pad.R1()"
+ -> (!= 0): Health and collectables ("select"/"insert").
+ -> "ePadGadget" flag: 0x00001000
+
+(DWORD) 006269FC # (0x08) "KF_MENU"
+ -> (!= 0): Main menu (pause).
+
+(DWORD) 00626A00 # (0x09) "KF_START" / "pad.start()"
+ -> (!= 0): Main menu, but ignored on pad and keyboard. (works by hacking...)
+ -> "ePadGadget" flag: 0x00040000
+
+(DWORD) 00626A04 # (0x0A) "KF_DIG_UP"
+ -> Unused.
+
+(DWORD) 00626A08 # (0x0B) "KF_DIG_UP"
+ -> Unused.
+
+(DWORD) 0626A0C # (0x0C) "KF_DIG_RIGHT"
+ -> Unused.
+
+(DWORD) 00626A10 # (0x0D) "KF_DIG_DOWN"
+ -> Unused.
+
+(DWORD) 00626A14 # (0x0E) "KF_RESET_CAMERA" / (...)
+ -> (!= 0): Reposition camera behind Kao's back.
+
+(DWORD) 00626A18 # (0x0F) "KF_LEFTSTICK" / (...)
+ -> Unused.
+
+(DWORD) 00626A1C # (0x10) "KF_BONUS_1" / "pad.sb1()"
+ -> Is not cleared and can only be enabled by hacking!
+ -> "ePadGadget" flag: 0x00010000
+
+(DWORD) 00626A20 # (0x11) "KF_BONUS_2" / "pad.sb2()"
+ -> Is not cleared and can only be enabled by hacking!
+ -> "ePadGadget" flag: 0x00020000
+
+00626EB0 # początek tablicy "Direct Input Keyboard Scan Codes"
+ -> `DIK_ESCAPE = 0x01`, (00626EB0 + 01 = 00626EB1)
+ -> `DIK_RETURN = 0x1C`, (00626EB0 + 1C = 00626ECC)
+ -> `DIK_DOWN   = 0xD0`, (00626EB0 + D0 = 00626F80)
+ -> "pad.start()" powiązane z `DIK_ESCAPE`
+ -> `00 != BYTE[00626ECC]` (a dokładnie `= 0x80`) jeśli "ENTER" wciśniety!
+
+
+================================================================
+== Hackowanie funkcji do użytku z dodatkowym
+== programem Tool-Assisted, attachującym "kao2.exe"
+================================================================
+== "OllyDbg": skrypty "Multiline Ultimate Assembler"
+================================================================
+
+  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+  ;; Tryb Replay, Tryb Record. Opis danych.
+
+  ;; <kao2.004919E0> ## funkcja aktualizująca stan wciśniętych guzików
+
+  ;; BYTE[00626EA5] ## unused "-ps2pad" boolean (default: false)
+
+  ;; TRYB REPLAYING
+  ;;  (00, 01): kontynuuj bez czekania
+  ;;  (02): sygnał że TAS chce wstawić input, więc Kao2 powinno wstawić (03)
+  ;;  (03): sygnał że Kao2 jest w nieskończonej pęti i TAS może wprowadzić zmiany
+
+  ;; TRYP RECORDING
+  ;;  (00, 01): kontynuuj bez czekania
+  ;;  (02): sygnał że TAS chce zapisać obecnie sprofilowany input
+  ;;  (03): sygnał że TAS może skopiować inputy, więc Kao2 czeka na zmianę flagi
+
+  ;; poniższy kod napisałem tk, że sygnał (02) nie jest sprawdany bezpośrednio,
+  ;; jest sprawdane tylko czy flaga jest różna od (00, 01).
+  ;; Sygnał (02) wpisuje grze do pamięci TAS,
+  ;; natomiast sygnał (03) wpisuje sam Kao2
+  ;; i czeka aż flaga zmieni się poprzez TAS na (00) lub na (02).
+
+
+  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+  ;; "KAO2_INJECTION_PLAYMODE"
+
+  <004919E0..00491A41>
+
+  ;; * Clear input state
+
+    push edi
+
+    xor eax,eax
+    xor ecx,ecx
+    mov cl,18
+    mov edi,006269BC
+    rep stosd
+
+    pop edi
+
+  ;; Tool-Assisted signals
+
+    cmp byte[00626EA5],01
+      jbe short @kontynuuj
+
+    mov byte[00626EA5],03
+
+  @synchro:
+    cmp byte[00626EA5],03
+      je short @synchro
+
+    retn
+
+  @kontynuuj:
+
+  ;; * Gamepad device (sprawdzanie 00626E9C redundant)
+    call 00490ED0
+
+;;  mov eax,dword[00626E9C]
+;;  test eax,eax
+;;    jz short @nie_ma_gamepada
+;;
+;;  call 00490ED0
+;;
+;;@nie_ma_gamepada:
+
+  ;; * Mouse device (pomijamy)
+
+;;  mov eax,dword[00626E98]
+;;  test eax,eax
+;;    jz short @nie_ma_klawiatury
+;;
+;;  call 00491600
+;;
+;;@nie_ma_klawiatury:
+
+  ;; * Keyboard device (sprawdzanie 00626E98 redundant)
+    jmp 00491600
+
+
+  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+  ;; "KAO2_INJECTION_RECMODE"
+
+  <004919E0..00491A41>
+
+  ;; * Clear input state
+
+    push edi
+
+    xor eax,eax
+    xor ecx,ecx
+    mov cl,18
+    mov edi,006269BC
+    rep stosd
+
+    pop edi
+
+  ;; * Gamepad device (sprawdzanie 00626E9C redundant)
+    call 00490ED0
+
+;;  mov eax,dword[00626E9C]
+;;  test eax,eax
+;;    jz short @nie_ma_gamepada
+;;
+;;  call 00490ED0
+;;
+;;@nie_ma_gamepada:
+
+  ;; * Mouse device (pomijamy)
+
+  ;; * Keyboard device (sprawdzanie 00626E98 redundant)
+    call 00491600
+
+;;  mov eax,dword[00626E98]
+;;  test eax,eax
+;;    jz short @nie_ma_klawiatury
+;;
+;;  call 00491600
+;;
+;;@nie_ma_klawiatury:
+
+  ;; * Tool-Assisted signals
+
+    cmp byte[00626EA5],01
+      jbe short @kontynuuj
+
+    mov byte[00626EA5],03
+
+  @synchro:
+    cmp byte[00626EA5],03
+      je short @synchro
+
+  @kontynuuj:
+
+    retn
+
+
+  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+  ;; "KAO2_INJECTION_PLAYMODE" (DEBUG with counters)
+
+  <004919E0..00491A41>
+
+    push edi
+
+    xor eax,eax
+    xor ecx,ecx
+    mov cl,18
+    mov edi,006269BC
+    rep stosd
+
+    pop edi
+
+    cmp byte[00626EA5],01
+      jbe short @kontynuuj
+
+    mov byte[00626EA5],03
+
+  @synchro:
+    cmp byte[00626EA5],03
+      je short @synchro
+
+    inc dword[00626A28]
+    retn
+
+  @kontynuuj:
+
+    inc dword[00626A24]
+
+    call 00490ED0 ;; Gamepad
+    jmp 00491600 ;; Keyboard
+
+
+  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+  ;; "KAO2_INJECTION_RECMODE" (DEBUG with counters)
+
+  <004919E0..00491A41>
+
+    push edi
+
+    xor eax,eax
+    xor ecx,ecx
+    mov cl,18
+    mov edi,006269BC
+    rep stosd
+
+    pop edi
+
+    call 00490ED0 ;; Gamepad
+    call 00491600 ;; Keyboard
+
+    cmp byte[00626EA5],01
+      jbe short @kontynuuj
+
+    mov byte[00626EA5],03
+
+  @synchro:
+    cmp byte[00626EA5],03
+      je short @synchro
+
+    inc dword[00626A28]
+    retn
+
+  @kontynuuj:
+
+    inc dword[00626A24]
+    retn
+
+
+  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+  ;; Renderuj (tylko - spośród oryginalnych debugowych
+  ;; tekstów - i zawsze - niezależnie od jakiś tam
+  ;; flag czy booleanów) tekst "Average Frame Rate"
+  ;; (małą białą czcionką w prawym górnym rogu okna gry)
+
+  <0048B706>
+    fld dword[edi+2C]
+    sub esp,08
+    fstp qword[esp]
+    push 00609700
+    mov eax,dword[006267A8]
+    sub eax,18
+    push eax
+    mov eax,dword[006267AC]
+    sub eax,78
+    push eax
+    call 004B5160
+    add esp,14
+    jmp 0048BA86
+    nop
+
+
+  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+  ;; Renderuj (tylko i zawsze) "Average Frame Rate"
+  ;; wraz z dodatkowym tekstem (wersja 2-ga dla programu TAS)
+
+  <0048B706>
+
+    fld dword[edi+2C]
+    sub esp,08
+    fstp qword[esp]
+    push 0060970C
+    mov eax,dword[006267A8]
+    sub eax,0014
+    push eax
+    mov eax,dword[006267AC]
+    sub eax,00B0
+    push eax
+    call 004B5160
+
+    add esp,14
+    push 006096F0
+    mov eax,dword[6267A8]
+    sub eax,0028
+    push eax
+    mov eax,dword[6267AC]
+    sub eax,00D0
+    push eax
+    call 004b5160
+    add esp,0C
+
+    jmp 0048BA86
+
+
+  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+  ;; Zmieniaj inputy (+ aktualizuj logikę)
+  ;; ZAWSZE I TYLKO na początku każdej pełnej Anim-klatki
+  ;; (aktualizowanie w dokładnie 30 FPS)
+  ;;  | DRAWBACK: problem z synchronizacją wejścia do menu,
+  ;;  | w najgorszym-case-scenario (delta = 0.1 sec) muszą być
+  ;;  | trzy klatki inputu: [START][START][START (+any)].
+
+    ```
+    CONST FLOAT FPS = 30.0f;
+
+    FLOAT Gamelet_0010 = 1.0f;  // AnimSpeed
+    FLOAT Gamelet_0360 = 0;     // Total time in seconds
+    FLOAT Gamelet_0364 = 0;     // Temporary Elapsed Frames
+
+    BOOL Gamelet_0384 = false;  // IsPaused
+
+    EXTERN VOID refreshInputState();
+    EXTERN VOID updateLogic(float delta, float total);
+    EXTERN VOID menuAndRendering();
+
+    VOID onTick(FLOAT delta)
+    {
+        if (!Gamelet_0384)
+        {
+            FLOAT elapsed_frames = Gamelet_0010 * delta * FPS + Gamelet_0364;
+            DWORD steps          = ftoul(elapsed_frames);
+            elapsed_frames       = (FLOAT) fmod(elapsed_frames, 1.0);
+
+            if (0 != steps)
+            {
+                FLOAT step_time  = 1.0f / FPS;
+                do
+                {
+                    refreshInputState();
+
+                    Gamelet_0360 += step_time;
+                    updateLogic(step_time, Gamelet_0360);
+
+                    steps--;
+                }
+                while (0 != steps)
+            }
+
+            Gamelet_0364 = elapsed_frames;
+        }
+        else
+        {
+            refreshInputState();
+        }
+
+        menuAndRendering();
+    }
+    ```
+
+  ;; [esp+08] = local step_time
+  ;; [esp+10] = (using Arg1) local elapsed_frames
+
+  <0048C198..0048C260>
+
+    mov al,byte[esi+0384]
+    test al,al
+      jnz @onTickPaused
+
+    fld dword[esi+10]
+    fmul dword[esp+10]
+    fmul dword[005CDFB0] ;; 30.0f
+    fadd dword[esi+0364]
+    fst dword[esp+10]
+
+    ;;@ fstcw ax
+    ;;@ mov ax,word[esp+08]
+    ;;@ mov dx,ax
+    ;;@ and ax,F7FF
+    ;;@ or ax,0400
+    ;;@ mov word[esp+08],ax
+    ;;@ fldcw [esp+08]
+    ;;@ fistp dword[esp+08]
+    ;;@ mov edi,dword[esp+08]
+    ;;@ mov word[esp+08],dx
+    ;;@ fldcw [esp+08]
+    sub esp,08
+    fstp qword[esp]
+    call dword[005CD16C] ;; <&MSVCRT.floor>
+    fistp dword[esp]
+    mov edi,dword[esp]
+    add esp,08
+
+    fld dword[esp+10]
+    fld1
+    call 005A59D0 ;; <JMP.&MSVCRT._CIfmod> (FPREM)
+    fstp dword[esi+0364]
+
+    test edi,edi
+      ;;@ jz short @loopEnd
+      jz short @onTickEnd
+
+  @loopStart:
+
+    call 004919E0
+
+    fld dword[esp+08]
+    fadd dword[esi+0360]
+    fst dword[esi+360]
+    push ecx
+    fstp dword[esp]
+    mov eax,dword[005CE120] ;; CONST 1/30.
+    push eax
+    mov ecx,esi
+    call 0048BBD0
+
+    ;;@ fld1
+    ;;@ fld dword[esp+10]
+    ;;@ fsubrp st1,st0
+    ;;@ fstp dword[esp+10]
+
+    dec edi
+      jnz short @loopStart
+
+  @loopEnd:
+
+    ;;@ mov eax,dword[esp+10]
+    ;;@ mov dword[esi+0364],eax
+    jmp short @onTickEnd
+
+  @onTickPaused:
+
+    call 004919E0
+
+  @onTickEnd:
+
+    mov ecx,esi
+    call 00407BC0
+    pop edi
+    pop esi
+    pop ecx
+    retn 4
+
+
+  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+  ;; Zmieniaj inputy (+ aktualizuj logikę)
+  ;;  ZAWSZE I TYLKO na początku połowy każdej Anim-klatki
+  ;;  (tj. każdy update-step to dokładnie 0.5 klatki, oraz
+  ;;  co za tym idzie aktualizacje w 60 klatek na sekundę)
+
+    ```
+    CONST FLOAT LOGIC_FPS      = 30.0f;
+    CONST FLOAT UPDATE_PORTION = 0.5f;
+    CONST FLOAT UPDATE_FREQ    = (1.0f / UPDATE_PORTION);
+    CONST FLOAT STEP_TIME      = (UPDATE_PORTION / LOGIC_FPS);
+
+    FLOAT Gamelet_0010 = 1.0f;  // AnimSpeed
+    FLOAT Gamelet_0360 = 0;     // Total time in seconds
+    FLOAT Gamelet_0364 = 0;     // (Custom) Frame remainder
+
+    BOOL Gamelet_0384 = false;  // IsPaused
+
+    EXTERN VOID refreshInputState();
+    EXTERN VOID updateLogic(float delta, float total);
+    EXTERN VOID menuAndRendering();
+
+    VOID onTick(FLOAT delta)
+    {
+        if (!Gamelet_0384)
+        {
+            FLOAT elapsed_frames = Gamelet_0010 * delta * LOGIC_FPS + Gamelet_0364;
+            DWORD update_steps   = ftoul(UPDATE_FREQ * elapsed_frame);
+            Gamelet_0364         = fmod(elapsed_frames, UPDATE_PORTION);
+
+            if (0 != update_steps)
+            {
+                do
+                {
+                    refreshInputState();
+
+                    Gamelet_0360 += STEP_TIME;
+                    updateLogic(STEP_TIME, Gamelet_0360);
+
+                    update_steps--;
+                }
+                while (0 != update_steps)
+            }
+        }
+        else
+        {
+            refreshInputState();
+        }
+
+        menuAndRendering();
+    }
+    ```
+
+  <0048C198..0048C260>
+
+      ;; ( isPaused / inMenu )
+    mov al,byte[esi+0384]
+    test al,al
+      jnz @onTickPaused
+
+      ;; ElapedFrames =
+      ;;  AnimSpeed * delta * LOGIC_FPS + FrameRemainder =
+      ;;  AnimSpeed * Arg1 * 30.0f + FrameRemaindr
+    fld dword[esi+10]
+    fmul dword[esp+10] ;; Arg1 (float delta_time_seconds)
+    fmul dword[005CDFB0] ;; 30.0f
+    fadd dword[esi+0364]
+    fst dword[esp+10]
+
+      ;; UpdateSteps =
+      ;;  ftoul((1 / UpdatePortion) * ElapsedFrames) =
+      ;;  int(floor(2.0f * ElapsedFrames))
+    sub esp,08
+    fadd st0,st0
+    fstp qword[esp]
+    call dword[005CD16C] ;; <&MSVCRT.floor>
+    fistp dword[esp]
+    mov edi,dword[esp]
+    add esp,08
+
+      ;; FrameRemainder =
+      ;;  fmod(ElapsedFrames, UpdatePortion) =
+      ;;  fmod(ElapedFrames, 0.5f)
+    fld dword[esp+10]
+    fld dword[005CDA4C] ;; 0.5f
+    call 005A59D0 ;; <JMP.&MSVCRT._CIfmod> (FPREM)
+    fstp dword[esi+0364]
+
+    test edi,edi
+      jz short @onTickEnd
+
+      ;; StepTime =
+      ;;  UpdatePortion / LOGIC_FPS =
+      ;;  0.5f / 30.0f
+    fld dword[005CDA4C] ;; 0.5f
+    fmul dword[005CE120] ;; CONST 1/30.
+    fstp dword[esp+08]
+
+  @loopStart:
+
+    call 004919E0 ;; RefreshInputs
+
+    fld dword[esp+08] ;; StepTime
+    fadd dword[esi+0360]
+    fst dword[esi+360]
+    push ecx ;; Arg2: float totalTimeSeconds
+    fstp dword[esp]
+    mov eax,dword[esp+0C]
+    push eax ;; Arg1: float stepTimeSeconds
+    mov ecx,esi ;; Instance: eKao2Gamelet
+    call 0048BBD0
+
+    dec edi
+      jnz short @loopStart
+
+  @loopEnd:
+
+    jmp short @onTickEnd
+
+  @onTickPaused:
+
+    call 004919E0 ;; RefreshInputs
+
+  @onTickEnd:
+
+    mov ecx,esi
+    call 00407BC0
+    pop edi
+    pop esi
+    pop ecx
+    retn 4
+
+
+  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+================================================================
+== Końcowe modyfikacje do procesu "kao2.exe" z powyższych hacków
+================================================================
+
+# KAO2_INJECTION_PLAYMODE[51]
+004919E0: 57 31 C0 31 C9 B1 18 BF BC 69 62 00 F3 AB 5F 80 3D A5 6E 62 00 01 76 11 C6 05 A5 6E 62 00 03 80 3D A5 6E 62 00 03 74 F7 C3 E8 C2 F4 FF FF E9 ED FB FF FF
+
+# KAO2_INJECTION_RECMODE[51]
+004919E0: 57 31 C0 31 C9 B1 18 BF BC 69 62 00 F3 AB 5F E8 DC F4 FF FF E8 07 FC FF FF 80 3D A5 6E 62 00 01 76 10 C6 05 A5 6E 62 00 03 80 3D A5 6E 62 00 03 74 F7 C3
+
+# KAO2_INJECTION_PLAYMODE[64]  (debug with counters)
+57 31 C0 31 C9 B1 18 BF BC 69 62 00 F3 AB 5F 80 3D A5 6E 62 00 01 76 17 C6 05 A5 6E 62 00 03 80 3D A5 6E 62 00 03 74 F7 FF 05 28 6A 62 00 C3 FF 05 24 6A 62 00 E8 B6 F4 FF FF E9 E1 FB FF FF C3
+
+# KAO2_INJECTION_RECMODE[64]  (debug with counters)
+57 31 C0 31 C9 B1 18 BF BC 69 62 00 F3 AB 5F E8 DC F4 FF FF E8 07 FC FF FF 80 3D A5 6E 62 00 01 76 17 C6 05 A5 6E 62 00 03 80 3D A5 6E 62 00 03 74 F7 FF 05 28 6A 62 00 C3 FF 05 24 6A 62 00 C3
+
+# Dla zabawy: Przekazuj "delta = 0" do Gameleta i do Sceny
+# (pierwsza wesja to oryginał do testowanka JIT)
+0048C202: D8 7C 24 10
+0048C202: DD D8 D9 EE
+
+# Average FPS (kod i podmieniony napis na "fps: %0.4f")
+0048B706: D9 47 2C 83 EC 08 DD 1C E4 68 00 97 60 00 A1 A8 67 62 00 83 E8 18 50 A1 AC 67 62 00 83 E8 78 50 E8 35 9A 02 00 83 C4 14 E9 53 03 00 00 90
+00609700: 66 70 73 3A 20 25 30 2E 34
+
+# Average FPS wersja 2 (dla programu TAS)
+# KAO2_INJECTION_MSGS[80]
+0048B706: D9 47 2C 83 EC 08 DD 1C E4 68 0C 97 60 00 A1 A8 67 62 00 83 E8 14 50 A1 AC 67 62 00 2D B0 00 00 00 50 E8 33 9A 02 00 83 C4 14 68 F0 96 60 00 A1 A8 67 62 00 83 E8 28 50 A1 AC 67 62 00 2D D0 00 00 00 50 E8 12 9A 02 00 83 C4 0C E9 30 03 00 00
+006096F0: 5B 54 41 53 5D 20 73 74 61 6E 64 62 79 20 3B 29 00
+0060970C: 41 76 65 72 61 67 65 20 46 50 53 3A 20 25 2E 34 66 00
+
+# Stablizacja 30 FPS + Odczyt inputów na każdej pełnej anim-klatce
+# KAO2_INJECTION_TICK[140]
+0048C198: 8A 86 84 03 00 00 84 C0 0F 85 6C 00 00 00 D9 46 10 D8 4C E4 10 D8 0D B0 DF 5C 00 D8 86 64 03 00 00 D9 54 E4 10 83 EC 08 DD 1C E4 FF 15 6C D1 5C 00 DB 1C E4 8B 3C E4 83 C4 08 D9 44 E4 10 D9 E8 E8 F3 97 11 00 D9 9E 64 03 00 00 85 FF 74 30 E8 F4 57 00 00 D9 44 E4 08 D8 86 60 03 00 00 D9 96 60 03 00 00 51 D9 1C E4 A1 20 E1 5C 00 50 89 F1 E8 C3 F9 FF FF 4F 75 D7 EB 05 E8 C9 57 00 00 89 F1 E8 A2 B9 F7 FF 5F 5E 59 C2 04 00
+
+# Stabilizacja 60 FPS + Odczyt inputów co połowę każdej anim-klatki
+# KAO2_INJECTION_TICK[161]
+0048C198: 8A 86 84 03 00 00 84 C0 0F 85 81 00 00 00 D9 46 10 D8 4C E4 10 D8 0D B0 DF 5C 00 D8 86 64 03 00 00 D9 54 E4 10 83 EC 08 D8 C0 DD 1C E4 FF 15 6C D1 5C 00 DB 1C E4 8B 3C E4 83 C4 08 D9 44 E4 10 D9 05 4C DA 5C 00 E8 ED 97 11 00 D9 9E 64 03 00 00 85 FF 74 3F D9 05 4C DA 5C 00 D8 0D 20 E1 5C 00 D9 5C E4 08 E8 DE 57 00 00 D9 44 E4 08 D8 86 60 03 00 00 D9 96 60 03 00 00 51 D9 1C E4 8B 44 E4 0C 50 89 F1 E8 AE F9 FF FF 4F 75 D8 EB 05 E8 B4 57 00 00 89 F1 E8 8D B9 F7 FF 5F 5E 59 C2 04 00
+
+# KAO2_INJECTION_ANIMNOTYFIER_FIXA[11]
+00444C66: F6 C4 41 0F 85 9D 00 00 00 90 90
+
+# KAO2_INJECTION_ANIMNOTYFIER_FIXB[11]
+00444D16: F6 C4 41 0F 85 AF 00 00 00 90 90
+
+
+================================================================
