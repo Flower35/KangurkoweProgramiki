@@ -27,6 +27,10 @@
   że dla anim-frame-kroków "<= 1.0" notyfikacja mogła zostać
   wysłana dwukrotnie (np. Kao wyrzucał dwa boomerangi)
 
+(2021-11-16)
+ * Algorytm synchronizacji "eKao2Gamelet::tick()"
+  dla od 30 FPS do 10000 FPS.
+
 
 ================================================================
 == Renderowanie
@@ -997,18 +1001,14 @@
             DWORD update_steps   = ftoul(UPDATE_FREQ * elapsed_frame);
             Gamelet_0364         = fmod(elapsed_frames, UPDATE_PORTION);
 
-            if (0 != update_steps)
+            while (0 != update_steps)
             {
-                do
-                {
-                    refreshInputState();
+                refreshInputState();
 
-                    Gamelet_0360 += STEP_TIME;
-                    updateLogic(STEP_TIME, Gamelet_0360);
+                Gamelet_0360 += STEP_TIME;
+                updateLogic(STEP_TIME, Gamelet_0360);
 
-                    update_steps--;
-                }
-                while (0 != update_steps)
+                update_steps--;
             }
         }
         else
@@ -1029,7 +1029,7 @@
 
       ;; ElapedFrames =
       ;;  AnimSpeed * delta * LOGIC_FPS + FrameRemainder =
-      ;;  AnimSpeed * Arg1 * 30.0f + FrameRemaindr
+      ;;  AnimSpeed * Arg1 * 30.0f + FrameRemainder
     fld dword[esi+10]
     fmul dword[esp+10] ;; Arg1 (float delta_time_seconds)
     fmul dword[005CDFB0] ;; 30.0f
@@ -1101,6 +1101,85 @@
 
 
   ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+  ;; Zmieniaj inputy (+ aktualizuj logikę)
+  ;;  ZAWSZE I TYLKO na początku DOWOLNEJ PORCJI
+  ;;  każdej Anim-klatki (stała wpisywana przez użytkownika)
+
+  <0048C198..0048C260>
+
+      ;; ( isPaused / inMenu )
+    mov al,byte[esi+0384]
+    test al,al
+      jnz @onTickPaused
+
+      ;; ElapedFrames =
+      ;;  AnimSpeed * delta * LOGIC_FPS + FrameRemainder =
+      ;;  AnimSpeed * Arg1 * 30.0f + FrameRemainder
+    fld dword[esi+10]
+    fmul dword[esp+10] ;; Arg1 (float delta_time_seconds)
+    fmul dword[005CDFB0] ;; 30.0f
+    fadd dword[esi+0364]
+    fst dword[esp+10]
+
+      ;; UpdateSteps =
+      ;;  int(floor(ElapsedFrames / UpdatePortion))
+    sub esp,08
+    fdiv dword[0048C13C] ;; CONST CUSTOM UpdatePortion
+    fstp qword[esp]
+    call dword[005CD16C] ;; <&MSVCRT.floor>
+    fistp dword[esp]
+    mov edi,dword[esp]
+    add esp,08
+
+      ;; FrameRemainder =
+      ;;  fmod(ElapsedFrames, UpdatePortion) =
+    fld dword[esp+10]
+    fld dword[0048C13C] ;; CONST CUSTOM UpdatePortion
+    call 005A59D0 ;; <JMP.&MSVCRT._CIfmod> (FPREM)
+    fstp dword[esi+0364]
+
+    test edi,edi
+      jz short @onTickEnd
+
+    mov eax,dword[0048C138] ;; CONST CUSTOM StepTime
+    mov dword[esp+08],eax
+
+  @loopStart:
+
+    call 004919E0 ;; RefreshInputs
+
+    fld dword[esp+08] ;; StepTime
+    fadd dword[esi+0360]
+    fst dword[esi+360]
+    push ecx ;; Arg2: float totalTimeInSeconds
+    fstp dword[esp]
+    mov eax,dword[esp+0C] ;; Arg1: float StepTime
+    push eax
+    mov ecx,esi ;; Instance: eKao2Gamelet
+    call 0048BBD0
+
+    dec edi
+      jnz short @loopStart
+
+  @loopEnd:
+
+    jmp short @onTickEnd
+
+  @onTickPaused:
+
+    call 004919E0 ;; RefreshInputs
+
+  @onTickEnd:
+
+    mov ecx,esi
+    call 00407BC0
+    pop edi
+    pop esi
+    pop ecx
+    retn 4
+
+
+  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 
 ================================================================
@@ -1141,6 +1220,12 @@
 # Stabilizacja 60 FPS + Odczyt inputów co połowę każdej anim-klatki
 # KAO2_INJECTION_TICK[161]
 0048C198: 8A 86 84 03 00 00 84 C0 0F 85 81 00 00 00 D9 46 10 D8 4C E4 10 D8 0D B0 DF 5C 00 D8 86 64 03 00 00 D9 54 E4 10 83 EC 08 D8 C0 DD 1C E4 FF 15 6C D1 5C 00 DB 1C E4 8B 3C E4 83 C4 08 D9 44 E4 10 D9 05 4C DA 5C 00 E8 ED 97 11 00 D9 9E 64 03 00 00 85 FF 74 3F D9 05 4C DA 5C 00 D8 0D 20 E1 5C 00 D9 5C E4 08 E8 DE 57 00 00 D9 44 E4 08 D8 86 60 03 00 00 D9 96 60 03 00 00 51 D9 1C E4 8B 44 E4 0C 50 89 F1 E8 AE F9 FF FF 4F 75 D8 EB 05 E8 B4 57 00 00 89 F1 E8 8D B9 F7 FF 5F 5E 59 C2 04 00
+
+# Stabilizacja od 30 FPS do 10000 FPS + Odczyt inputów przed każdym update logiki
+# KAO2_INJECTION_TICK[2][158]
+0048C198: 8A 86 84 03 00 00 84 C0 0F 85 7E 00 00 00 D9 46 10 D8 4C E4 10 D8 0D B0 DF 5C 00 D8 86 64 03 00 00 D9 54 E4 10 83 EC 08 D8 35 3C C1 48 00 DD 1C E4 FF 15 6C D1 5C 00 DB 1C E4 8B 3C E4 83 C4 08 D9 44 E4 10 D9 05 3C C1 48 00 E8 E9 97 11 00 D9 9E 64 03 00 00 85 FF 74 38 A1 38 C1 48 00 89 44 E4 08 E8 E1 57 00 00 D9 44 E4 08 D8 86 60 03 00 00 D9 96 60 03 00 00 51 D9 1C E4 8B 44 E4 0C 50 89 F1 E8 B1 F9 FF FF 4F 75 D8 EB 05 E8 B7 57 00 00 89 F1 E8 90 B9 F7 FF 5F 5E 59 C2 04 00
+0048C138: 89 88 08 3D ((UpdatePortion / 30.0): [0.0001 do 0.03333])
+0048C13C: 00 00 80 3F (UpdatePortion: [0.003 do 1.000])
 
 # KAO2_INJECTION_ANIMNOTYFIER_FIXA[11]
 00444C66: F6 C4 41 0F 85 9D 00 00 00 90 90

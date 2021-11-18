@@ -16,6 +16,15 @@
 //  * Injekcja kodu na poprawienie warunku wysłania notyfikacji
 //   przez klasę "eAnimNotyfier" (przez kod na stałe kroki
 //   czasowe, notyfikacja była wysyłana podwójnie)
+// (2021-11-15)
+//  * Przebudowanie GUI (checkboxes) oraz rozbicie opcji programu
+//   na kilka flag (tryby Tool Assisted, opcje Kontrolne)
+//   oraz kilka powtarzalnych makro.
+// (2021-11-16)
+//  * Injekcja kodu na stabilizację dowolnego FPS. (30 do 10000)
+// (2021-11-18)
+//  * Ulepszone komunikaty o statusie i o synchronizacji FPS,
+//   możliwość wprowadzania inputów klatka-po-klatce.
 ////////////////////////////////////////////////////////////////
 
 ////////////////////////////////////////////////////////////////
@@ -41,7 +50,8 @@
 ////////////////////////////////////////////////////////////////
 
 #define KAO2TAS_WINDOW_CLASSNAME  "KAO2_TAS_WINDOW_CLASS"
-#define KAO2TAS_WINDOW_NAME  "Kao2 Tool-Assisted Speedruns - Input Tester"
+#define KAO2TAS_WINDOW_NAME       "Kao2 Tool-Assisted Speedruns - Input Tester"
+#define MSGBOX_ERROR_CAPTION      "An epic fail has occurred! :)"
 
 enum DIRECTION
 {
@@ -49,38 +59,55 @@ enum DIRECTION
     RIGHT
 };
 
+#define UPPER_BUTTONS_COUNT   6
+#define UPPER_CHECKBOX_COUNT  4
+
 enum IDM
 {
-    BUTTON_ATTACH = 101,
-    BUTTON_RUN,
-    BUTTON_PLAYMODE,
-    BUTTON_RECMODE,
-    BUTTON_OPEN_FILE,
-    BUTTON_SAVE_FILE,
-    BUTTON_CLEAR_ALL,
-    BUTTON_NOTHING,
-    BUTTON_PREV_PAGE,
-    BUTTON_NEXT_PAGE,
-    BUTTON_INSERT_FRAME,
-    BUTTON_REMOVE_FRAME,
-    BUTTON_FRAME_PARAM
+    IDM_BUTTON_ATTACH = 101,
+    IDM_BUTTON_RUN,
+    IDM_IFRAME_ADVANCE,
+    IDM_BUTTON_OPEN_FILE,
+    IDM_BUTTON_SAVE_FILE,
+    IDM_BUTTON_CLEAR_ALL,
+    IDM_CHECK_MODE,
+    IDM_CHECK_STEP,
+    IDM_CHECK_CLONE,
+    IDM_CHECK_FRAMERULE,
+    IDM_EDIT_FRAMERULE,
+    IDM_BUTTON_PREV_PAGE,
+    IDM_BUTTON_NEXT_PAGE,
+    IDM_BUTTON_INSERT_FRAME,
+    IDM_BUTTON_REMOVE_FRAME,
+    IDM_BUTTON_FRAME_PARAM
 };
 
-#define UPPER_BUTTONS_COUNT  8
-
-const char * BUTTON_NAMES[UPPER_BUTTONS_COUNT + 4 + 2] =
+const char * UPPER_BUTTON_NAMES[UPPER_BUTTONS_COUNT] =
 {
-    "Attach <KAO2>", "RUN!  |>", "Mode:REPLAY inputs", "Mode:RECORD inputs",
-    "Open data file", "Save data file", "Clear all inputs", "",
-    "<", ">", "+", "-", "Left Stick (x, y)", "Right Stick (x, y)"
+    "Attach <KAO2>", "RUN!  |>", "I-Frame advance",
+    "Open data file", "Save data file", "Clear all inputs"
+};
+
+const char * UPPER_CHECKBOX_NAMES[UPPER_CHECKBOX_COUNT] =
+{
+    "RECORDING mode (checked) / REPLAY mode (unchecked)",
+    "Step-by-step mode (manual inputs in REC mode)",
+    "Clone previous i-frame while creating a new one",
+    "Stabilize framerate of updates (enter desired FPS and press ENTER)"
+};
+
+const char * OTHER_BUTTON_NAMES[4 + 2] =
+{
+    "<", ">", "+", "-",
+    "Left Stick (x, y)", "Right Stick (x, y)"
 };
 
 const char * FRAME_PARAM_NAMES[1 << 4] =
 {
     "(x) JUMP", "(o) PUNCH", "(q) ROLL", "(t) THROW",
-    "(RB) STRAFE", "(LB) FPP", "(L1) UNUSED", "(SELECT) HUD",
-    "(ESC) MENU", "(START) MENU", "D-pad UP", "D-pad LEFT",
-    "D-pad RIGHT", "D-pad DOWN", "RESET CAM", "LOADING"
+    "(RB) STRAFE", "(LB) FPP", "(L1) unused", "(SELECT) HUD",
+    "(ESC) MENU", "(START) MENU", "(D-pad U) unused", "(D-pad L) unused",
+    "(D-pad R) unused", "(D-pad D) unused", "RESET CAM", "[LOADING]"
 };
 
 ////////////////////////////////////////////////////////////////
@@ -88,13 +115,28 @@ const char * FRAME_PARAM_NAMES[1 << 4] =
 ////////////////////////////////////////////////////////////////
 
 #define BUF_SIZE       256
+#define SMALL_BUF_SIZE  64
 #define TINY_BUF_SIZE   32
 
-enum TAS_mode
+#define ENUMERATED_PROCESSES  512
+
+enum ToolAssistedModeFlags
 {
-    TM_REPLAY,
-    TM_RECORD
+    TA_MODE_REC_OR_PLAY  = (0x01 <<  0), /* REC if set, PLAY otherwise */
+    TA_MODE_STEP_BY_STEP = (0x01 <<  1),
+    TA_MODE_CLONE_FRAME  = (0x01 <<  2),
+    TA_MODE_FRAMERULE    = (0x01 <<  3)
 };
+
+enum ControlFlags
+{
+    CTRL_FLAG_ALLOWBTNS = (0x01 <<  0),
+    CTRL_FLAG_IFRAMEADV = (0x01 <<  1),
+    CTRL_FLAG_FPS_FOCUS = (0x01 <<  2)
+};
+
+BOOL KAO2_writeMem(DWORD address, LPCVOID from, size_t length);
+BOOL KAO2_readMem(DWORD address, LPVOID into, size_t length);
 
 struct FrameNode;
 typedef struct FrameNode FrameNode_t;
@@ -102,18 +144,19 @@ typedef struct FrameNode FrameNode_t;
 struct FrameNode
 {
     float sticks[2][2];
-    DWORD buttons;
+    WORD buttons; /* 16 states */
     FrameNode_t * prev;
     FrameNode_t * next;
 };
 
-#define KAO2_FPS  30
-#define SECONDS_IN_MINUTE  60
+#define KAO2_ANIM_FPS    30
+#define KAO2_MIN_FPS     10
+#define KAO2_MAX_FPS  10000
 
 #define KAO2_WINDOW_CLASSNAME  "GLUT"
 #define KAO2_WINDOW_NAME  "kangurek Kao: 2ga runda"
 
-#define FRAMES_PER_PAGE  ((SECONDS_IN_MINUTE / 2) * KAO2_FPS)
+#define FRAMES_PER_PAGE  (10 * KAO2_ANIM_FPS)
 
 #define TAS_BINFILE_HEADER  "KAO2TAS!"
 
@@ -121,14 +164,18 @@ struct FrameNode
 // Globals (common, GUI, i-frames, proc)
 ////////////////////////////////////////////////////////////////
 
-char g_lastMessage[BUF_SIZE];
+BOOL g_quit;
 
-enum TAS_MODE g_TAS_mode;
+char g_lastMessage[BUF_SIZE / 2];
 
-BOOL g_allowButtons;
+BYTE g_toolAssistedMode;
+BYTE g_controlFlags;
+FLOAT g_updateFramePortion;
 
 HWND KAO2_mainWindow;
 HWND KAO2_statusLabel;
+HWND KAO2_frameRuleEditBox;
+HWND KAO2_frameRuleStatus;
 HWND KAO2_listBoxFrames;
 HWND KAO2_listBoxStatus;
 HWND KAO2_staticBoxSticks[2];
@@ -137,12 +184,12 @@ HWND KAO2_checkBoxParams[1 << 4];
 HWND KAO2_editBoxLevel;
 
 WNDPROC KAO2_staticSticksProcedures[2];
+WNDPROC KAO2_editFrameruleProcedure;
 HFONT KAO2_font01;
 HFONT KAO2_font02;
 
 FrameNode_t * g_frames;
 FrameNode_t * g_currentFrame;
-FrameNode_t * g_paintedFrame;
 int g_currentPage;
 int g_currentFrameId;
 int g_totalFrames;
@@ -156,29 +203,90 @@ HANDLE KAO2_gameHandle;
     (__x > __max) ? __max : \
         ( (__x < __min) ? __min : __x  )
 
+#define TAS_MACRO_WINDOWLOOP \
+    if (!KAO2_windowLoop()) { \
+        g_lastMessage[0] = '\0'; \
+        return FALSE; \
+    }
+
 #define TAS_MACRO_SHOW_INPUTS \
-    g_paintedFrame = frame; \
-    KAO2_clearAndUpdateFrameGui(frame); \
+    KAO2_clearAndUpdateFrameGui(g_currentFrame); \
     UpdateWindow(KAO2_mainWindow); \
-    if (!KAO2_windowLoop()) { return FALSE; } \
-    g_paintedFrame = NULL;
+    TAS_MACRO_WINDOWLOOP
 
 #define CHECK_WINDOW_AND_SET_FONT(__hwnd, __font) \
     if (NULL == __hwnd) { return FALSE; } \
     SendMessage(__hwnd, WM_SETFONT, \
     (WPARAM)__font, (LPARAM) 0);
 
+#define MACRO_ASSERT_GAME_HANDLE \
+    if (INVALID_HANDLE_VALUE == KAO2_gameHandle) { \
+        KAO2_showStatus("Please attach <Kao2> first!"); \
+    }
+
+#define MACRO_FRAMERULE_INJECTION \
+    MACRO_ASSERT_GAME_HANDLE \
+    else { \
+        a = KAO2_frameruleInjection(); \
+        if (a) { \
+            if (1 == a) { sprintf_s(buf, SMALL_BUF_SIZE, "Enabled frame synchronization (%.2f FPS limit).", (KAO2_ANIM_FPS / g_updateFramePortion)); \
+            } else { sprintf_s(buf, SMALL_BUF_SIZE, "Disabled frame synchronization."); } \
+            KAO2_showStatus(buf); \
+        } else { \
+            KAO2_iAmError("Failed to inject frame-rule code!"); \
+        } \
+    }
+
+#define TAS_MACRO_INJECT_CODE(__array, __at) \
+    if (!KAO2_writeMem(__at, __array, sizeof(__array))) { return FALSE; }
+
+#define TAS_MACRO_INJECT_STR(__str, __at) \
+    if (!KAO2_writeMem(__at, __str, 0x01 + strlen(__str))) { return FALSE; }
+
+#define TAS_MACRO_STORE_DWORD(__dword, __at) \
+    if (!KAO2_writeMem(__at, &__dword, 0x04)) { return FALSE; }
+
 #define TAS_MACRO_STORE_FLAG(__value, __at) \
     flag = __value; \
-    if (!KAO2_writeMem(__at, &flag, 0x01)) { return FALSE; } \
+    if (!KAO2_writeMem(__at, &flag, 0x01)) { return FALSE; }
 
 #define TAS_MACRO_WAIT_FLAG_EQ(__value, __at) \
     do { if (!KAO2_readMem(__at, &flag, 0x01)) { return FALSE; } \
     } while (__value == flag);
 
-#define TAS_MACRO_WAIT_FLAG_NE(__value, __at) \
-    do { if (!KAO2_readMem(__at, &flag, 0x01)) { return FALSE; } \
+#define TAS_MACRO_WAIT_FLAG_NE_WINLOOP(__value, __at) \
+    do { \
+        if (!KAO2_readMem(__at, &flag, 0x01)) { return FALSE; } \
+        TAS_MACRO_WINDOWLOOP \
     } while (__value != flag);
+
+#define ENABLE_TAM_FLAG(__flag) \
+    g_toolAssistedMode |= (BYTE) TA_MODE_##__flag;
+
+#define DISABLE_TAM_FLAG(__flag) \
+    g_toolAssistedMode &= (BYTE) (~TA_MODE_##__flag);
+
+#define CHECK_TAM_FLAG(__flag) \
+    (TA_MODE_##__flag & g_toolAssistedMode)
+
+#define ENABLE_CTRL_FLAG(__flag) \
+    g_controlFlags |= (BYTE) CTRL_FLAG_##__flag;
+
+#define DISABLE_CTRL_FLAG(__flag) \
+    g_controlFlags &= (BYTE) (~CTRL_FLAG_##__flag);
+
+#define CHECK_CTRL_FLAG(__flag) \
+    (CTRL_FLAG_##__flag & g_controlFlags)
+
+#define WPARAM_CLICKED \
+    (BN_CLICKED == HIWORD(wParam))
+
+#define LPARAM_CHECKED \
+    (BST_CHECKED == SendMessage((HWND)lParam, BM_GETCHECK, (WPARAM)NULL, (LPARAM)NULL))
+
+#define TAS_MACRO_RECORDING_MSG(details) \
+    sprintf_s(buf, BUF_SIZE, "Recording inputs... [%05i] %s", a, details); \
+    KAO2_showStatus(buf); \
 
 ////////////////////////////////////////////////////////////////
 // KAO2 Addresses and Code Replacements
@@ -189,12 +297,12 @@ HANDLE KAO2_gameHandle;
 
 const BYTE KAO2_INJECTION_PLAYMODE[51] =
 {
-    0x57, 0x31, 0xC0, 0x31, 0xC9, 0xB1, 0x18, 0xBF, 0xBC, 0x69, 0x62, 0x00, 0xF3, 0xAB, 0x5F, 0x80, 0x3D, 0xA5, 0x6E, 0x62, 0x00, 0x01, 0x76, 0x11, 0xC6, 0x05, 0xA5, 0x6E, 0x62, 0x00, 0x03, 0x80, 0x3D, 0xA5, 0x6E, 0x62, 0x00, 0x03, 0x74, 0xF7, 0xC3, 0xE8, 0xC2, 0xF4, 0xFF, 0xFF, 0xE9, 0xED, 0xFB, 0xFF, 0xFF
+  0x57,0x31,0xC0,0x31,0xC9,0xB1,0x18,0xBF,0xBC,0x69,0x62,0x00,0xF3,0xAB,0x5F,0x80,0x3D,0xA5,0x6E,0x62,0x00,0x01,0x76,0x11,0xC6,0x05,0xA5,0x6E,0x62,0x00,0x03,0x80,0x3D,0xA5,0x6E,0x62,0x00,0x03,0x74,0xF7,0xC3,0xE8,0xC2,0xF4,0xFF,0xFF,0xE9,0xED,0xFB,0xFF,0xFF
 };
 
 const BYTE KAO2_INJECTION_RECMODE[51] =
 {
-    0x57, 0x31, 0xC0, 0x31, 0xC9, 0xB1, 0x18, 0xBF, 0xBC, 0x69, 0x62, 0x00, 0xF3, 0xAB, 0x5F, 0xE8, 0xDC, 0xF4, 0xFF, 0xFF, 0xE8, 0x07, 0xFC, 0xFF, 0xFF, 0x80, 0x3D, 0xA5, 0x6E, 0x62, 0x00, 0x01, 0x76, 0x10, 0xC6, 0x05, 0xA5, 0x6E, 0x62, 0x00, 0x03, 0x80, 0x3D, 0xA5, 0x6E, 0x62, 0x00, 0x03, 0x74, 0xF7, 0xC3
+  0x57,0x31,0xC0,0x31,0xC9,0xB1,0x18,0xBF,0xBC,0x69,0x62,0x00,0xF3,0xAB,0x5F,0xE8,0xDC,0xF4,0xFF,0xFF,0xE8,0x07,0xFC,0xFF,0xFF,0x80,0x3D,0xA5,0x6E,0x62,0x00,0x01,0x76,0x10,0xC6,0x05,0xA5,0x6E,0x62,0x00,0x03,0x80,0x3D,0xA5,0x6E,0x62,0x00,0x03,0x74,0xF7,0xC3
 };
 
 #define KAO2_LOADING_FLAG_ADDRESS  0x0062451C
@@ -212,14 +320,17 @@ const char * KAO2_AVGFPS         = "Average FPS: %.4f";
 
 const BYTE KAO2_INJECTION_MSGS[80] =
 {
-    0xD9, 0x47, 0x2C, 0x83, 0xEC, 0x08, 0xDD, 0x1C, 0xE4, 0x68, 0x0C, 0x97, 0x60, 0x00, 0xA1, 0xA8, 0x67, 0x62, 0x00, 0x83, 0xE8, 0x14, 0x50, 0xA1, 0xAC, 0x67, 0x62, 0x00, 0x2D, 0xB0, 0x00, 0x00, 0x00, 0x50, 0xE8, 0x33, 0x9A, 0x02, 0x00, 0x83, 0xC4, 0x14, 0x68, 0xF0, 0x96, 0x60, 0x00, 0xA1, 0xA8, 0x67, 0x62, 0x00, 0x83, 0xE8, 0x28, 0x50, 0xA1, 0xAC, 0x67, 0x62, 0x00, 0x2D, 0xD0, 0x00, 0x00, 0x00, 0x50, 0xE8, 0x12, 0x9A, 0x02, 0x00, 0x83, 0xC4, 0x0C, 0xE9, 0x30, 0x03, 0x00, 0x00
+  0xD9,0x47,0x2C,0x83,0xEC,0x08,0xDD,0x1C,0xE4,0x68,0x0C,0x97,0x60,0x00,0xA1,0xA8,0x67,0x62,0x00,0x83,0xE8,0x14,0x50,0xA1,0xAC,0x67,0x62,0x00,0x2D,0xB0,0x00,0x00,0x00,0x50,0xE8,0x33,0x9A,0x02,0x00,0x83,0xC4,0x14,0x68,0xF0,0x96,0x60,0x00,0xA1,0xA8,0x67,0x62,0x00,0x83,0xE8,0x28,0x50,0xA1,0xAC,0x67,0x62,0x00,0x2D,0xD0,0x00,0x00,0x00,0x50,0xE8,0x12,0x9A,0x02,0x00,0x83,0xC4,0x0C,0xE9,0x30,0x03,0x00,0x00
 };
 
-#define KAO2_CODE_TICK_ADDRESS  0x0048C198
+#define KAO2_CODE_TICK_ADDRESS    0x0048C198
+#define KAO2_CONST_TICK_STEPTIME  0x0048C138
+#define KAO2_CONST_TICK_FPORTION  0x0048C13C
 
-const BYTE KAO2_INJECTION_TICK[161] =
+const BYTE KAO2_INJECTION_TICK[2][158] =
 {
-    0x8A, 0x86, 0x84, 0x03, 0x00, 0x00, 0x84, 0xC0, 0x0F, 0x85, 0x81, 0x00, 0x00, 0x00, 0xD9, 0x46, 0x10, 0xD8, 0x4C, 0xE4, 0x10, 0xD8, 0x0D, 0xB0, 0xDF, 0x5C, 0x00, 0xD8, 0x86, 0x64, 0x03, 0x00, 0x00, 0xD9, 0x54, 0xE4, 0x10, 0x83, 0xEC, 0x08, 0xD8, 0xC0, 0xDD, 0x1C, 0xE4, 0xFF, 0x15, 0x6C, 0xD1, 0x5C, 0x00, 0xDB, 0x1C, 0xE4, 0x8B, 0x3C, 0xE4, 0x83, 0xC4, 0x08, 0xD9, 0x44, 0xE4, 0x10, 0xD9, 0x05, 0x4C, 0xDA, 0x5C, 0x00, 0xE8, 0xED, 0x97, 0x11, 0x00, 0xD9, 0x9E, 0x64, 0x03, 0x00, 0x00, 0x85, 0xFF, 0x74, 0x3F, 0xD9, 0x05, 0x4C, 0xDA, 0x5C, 0x00, 0xD8, 0x0D, 0x20, 0xE1, 0x5C, 0x00, 0xD9, 0x5C, 0xE4, 0x08, 0xE8, 0xDE, 0x57, 0x00, 0x00, 0xD9, 0x44, 0xE4, 0x08, 0xD8, 0x86, 0x60, 0x03, 0x00, 0x00, 0xD9, 0x96, 0x60, 0x03, 0x00, 0x00, 0x51, 0xD9, 0x1C, 0xE4, 0x8B, 0x44, 0xE4, 0x0C, 0x50, 0x89, 0xF1, 0xE8, 0xAE, 0xF9, 0xFF, 0xFF, 0x4F, 0x75, 0xD8, 0xEB, 0x05, 0xE8, 0xB4, 0x57, 0x00, 0x00, 0x89, 0xF1, 0xE8, 0x8D, 0xB9, 0xF7, 0xFF, 0x5F, 0x5E, 0x59, 0xC2, 0x04, 0x00
+  {0xE8,0x43,0x58,0x00,0x00,0x8A,0x86,0x84,0x03,0x00,0x00,0x84,0xC0,0x74,0x1D,0x8B,0x8E,0x80,0x03,0x00,0x00,0x85,0xC9,0x0F,0x8E,0x95,0x00,0x00,0x00,0x84,0xC0,0x74,0x0B,0x8B,0xC1,0x48,0x89,0x86,0x80,0x03,0x00,0x00,0xEB,0x0A,0xC7,0x86,0x80,0x03,0x00,0x00,0x00,0x00,0x00,0x00,0xD9,0x46,0x10,0x83,0xEC,0x08,0xD8,0x4C,0x24,0x18,0xD9,0x54,0x24,0x18,0xD8,0x0D,0xC0,0xE1,0x5C,0x00,0xDD,0x1C,0x24,0xFF,0x15,0x74,0xD1,0x5C,0x00,0x83,0xC4,0x08,0xE8,0x2D,0x97,0x11,0x00,0x8B,0xF8,0x89,0x7C,0x24,0x08,0xDB,0x44,0x24,0x08,0xB9,0x88,0xB6,0x62,0x00,0xD8,0x7C,0x24,0x10,0xD9,0x5C,0x24,0x10,0xE8,0xD1,0xEE,0x02,0x00,0x83,0xFF,0x01,0x8B,0x54,0x24,0x10,0x89,0x96,0x64,0x03,0x00,0x00,0x7C,0x2C,0x8B,0xFF,0xD9,0x44,0x24,0x10,0x8B,0x96,0x64,0x03,0x00,0x00,0xD8,0x86,0x60,0x03,0x00,0x00,0x8B,0x06,0xD9,0x54,0x24,0x08},
+  {0x8A,0x86,0x84,0x03,0x00,0x00,0x84,0xC0,0x0F,0x85,0x7E,0x00,0x00,0x00,0xD9,0x46,0x10,0xD8,0x4C,0xE4,0x10,0xD8,0x0D,0xB0,0xDF,0x5C,0x00,0xD8,0x86,0x64,0x03,0x00,0x00,0xD9,0x54,0xE4,0x10,0x83,0xEC,0x08,0xD8,0x35,0x3C,0xC1,0x48,0x00,0xDD,0x1C,0xE4,0xFF,0x15,0x6C,0xD1,0x5C,0x00,0xDB,0x1C,0xE4,0x8B,0x3C,0xE4,0x83,0xC4,0x08,0xD9,0x44,0xE4,0x10,0xD9,0x05,0x3C,0xC1,0x48,0x00,0xE8,0xE9,0x97,0x11,0x00,0xD9,0x9E,0x64,0x03,0x00,0x00,0x85,0xFF,0x74,0x38,0xA1,0x38,0xC1,0x48,0x00,0x89,0x44,0xE4,0x08,0xE8,0xE1,0x57,0x00,0x00,0xD9,0x44,0xE4,0x08,0xD8,0x86,0x60,0x03,0x00,0x00,0xD9,0x96,0x60,0x03,0x00,0x00,0x51,0xD9,0x1C,0xE4,0x8B,0x44,0xE4,0x0C,0x50,0x89,0xF1,0xE8,0xB1,0xF9,0xFF,0xFF,0x4F,0x75,0xD8,0xEB,0x05,0xE8,0xB7,0x57,0x00,0x00,0x89,0xF1,0xE8,0x90,0xB9,0xF7,0xFF,0x5F,0x5E,0x59,0xC2,0x04,0x00}
 };
 
 #define KAO2_CODE_ANIMNOTYFIER_FIXA_ADDRESS  0x00444C66
@@ -227,12 +338,12 @@ const BYTE KAO2_INJECTION_TICK[161] =
 
 const BYTE KAO2_INJECTION_ANIMNOTYFIER_FIXA[11] =
 {
-    0xF6, 0xC4, 0x41, 0x0F, 0x85, 0x9D, 0x00, 0x00, 0x00, 0x90, 0x90
+  0xF6,0xC4,0x41,0x0F,0x85,0x9D,0x00,0x00,0x00,0x90,0x90
 };
 
 const BYTE KAO2_INJECTION_ANIMNOTYFIER_FIXB[11] =
 {
-    0xF6, 0xC4, 0x41, 0x0F, 0x85, 0xAF, 0x00, 0x00, 0x00, 0x90, 0x90
+  0xF6,0xC4,0x41,0x0F,0x85,0xAF,0x00,0x00,0x00,0x90,0x90
 };
 
 enum KAO2_KEY_DEFINES
@@ -256,10 +367,116 @@ enum KAO2_KEY_DEFINES
 };
 
 ////////////////////////////////////////////////////////////////
+// FRAME NODE: Reset local input frame
+////////////////////////////////////////////////////////////////
+
+VOID FrameNode_reset(FrameNode_t * node)
+{
+    if (NULL != node)
+    {
+        node->sticks[0][0] = 0;
+        node->sticks[0][1] = 0;
+        node->sticks[1][0] = 0;
+        node->sticks[1][1] = 0;
+        node->buttons = 0;
+        node->prev = NULL;
+        node->next = NULL;
+    }
+}
+
+////////////////////////////////////////////////////////////////
+// FRAME NODE: Write into the game
+////////////////////////////////////////////////////////////////
+
+BOOL FrameNode_writeToGame(FrameNode_t * node)
+{
+    DWORD a, b, address = KAO2_PAD_STICKS_ADDRESS;
+    BYTE flag;
+
+    for (a = 0; a < 2; a++)
+    {
+        for (b = 0; b < 2; b++)
+        {
+            if (!KAO2_writeMem(address, &(node->sticks[a][b]), 0x04))
+            {
+                return FALSE;
+            }
+
+            address += 0x04;
+        }
+    }
+
+    address = KAO2_BUTTONS_LIST_ADDRESS;
+    flag = 0x01;
+    b = 0x01;
+
+    for (a = 0; a < ((1 << 4) - 1); a++)
+    {
+        if (b & (node->buttons))
+        {
+            if (!KAO2_writeMem(address, &flag, 0x01))
+            {
+                return FALSE;
+            }
+        }
+
+        b = (b << 1);
+        address += 0x04;
+    }
+
+    return TRUE;
+}
+
+////////////////////////////////////////////////////////////////
+// FRAME NODE: Read from the game
+////////////////////////////////////////////////////////////////
+
+BOOL FrameNode_readFromGame(FrameNode_t * node)
+{
+    DWORD a, b, address = KAO2_PAD_STICKS_ADDRESS;
+    BYTE flag;
+
+    for (a = 0; a < 2; a++)
+    {
+        for (b = 0; b < 2; b++)
+        {
+            if (!KAO2_readMem(address, &(node->sticks[a][b]), 0x04))
+            {
+                return FALSE;
+            }
+
+            address += 0x04;
+        }
+    }
+
+    address = KAO2_BUTTONS_LIST_ADDRESS;
+    (node->buttons) = 0;
+    b = 0x01;
+
+    for (a = 0; a < ((1 << 4) - 1); a++)
+    {
+        if (!KAO2_readMem(address, &flag, 0x01))
+        {
+            return FALSE;
+        }
+
+        if (flag)
+        {
+            (node->buttons) |= b;
+        }
+
+        b = (b << 1);
+        address += 0x04;
+    }
+
+    return TRUE;
+}
+
+////////////////////////////////////////////////////////////////
 // FRAME NODE: Create new object
 ////////////////////////////////////////////////////////////////
 
-FrameNode_t * FrameNode_create(float l_x, float l_y, float r_x, float r_y, DWORD buttons, FrameNode_t * parent)
+FrameNode_t * FrameNode_create(float l_x, float l_y, float r_x, float r_y, WORD buttons, FrameNode_t * parent)
 {
     FrameNode_t * node = (FrameNode_t *) malloc(sizeof(FrameNode_t));
 
@@ -288,6 +505,34 @@ FrameNode_t * FrameNode_create(float l_x, float l_y, float r_x, float r_y, DWORD
     (node->prev) = parent;
 
     return node;
+}
+
+////////////////////////////////////////////////////////////////
+// FRAME NODE: Create empty object
+////////////////////////////////////////////////////////////////
+
+FrameNode_t * FrameNode_createEmpty(FrameNode_t * parent)
+{
+    return FrameNode_create(0, 0, 0, 0, 0, parent);
+}
+
+////////////////////////////////////////////////////////////////
+// FRAME NODE: Create new object from an existing node
+////////////////////////////////////////////////////////////////
+
+FrameNode_t * FrameNode_createFromCopy(FrameNode_t * node, FrameNode_t * parent)
+{
+    if (NULL != node)
+    {
+        return FrameNode_create
+        (
+            node->sticks[0][0], node->sticks[0][1],
+            node->sticks[1][0], node->sticks[1][1],
+            node->buttons, parent
+        );
+    }
+
+    return NULL;
 }
 
 ////////////////////////////////////////////////////////////////
@@ -359,6 +604,34 @@ BOOL filenameDatExt(const char * name)
 }
 
 ////////////////////////////////////////////////////////////////
+// BINARY FILE WITH INPUT FRAMES: Write bytes
+////////////////////////////////////////////////////////////////
+
+BOOL KAO2_writeFile(HANDLE file, LPCVOID what, size_t length)
+{
+    if (!WriteFile(file, what, length, NULL, NULL))
+    {
+        sprintf_s(g_lastMessage, (BUF_SIZE / 2), "Could not write %d bytes to the opened file!", length);
+    }
+
+    return TRUE;
+}
+
+////////////////////////////////////////////////////////////////
+// BINARY FILE WITH INPUT FRAMES: Read bytes
+////////////////////////////////////////////////////////////////
+
+BOOL KAO2_readFile(HANDLE file, LPVOID what, size_t length)
+{
+    if (!ReadFile(file, what, length, NULL, NULL))
+    {
+        sprintf_s(g_lastMessage, (BUF_SIZE / 2), "Could not read %d bytes from the opened file!", length);
+    }
+
+    return TRUE;
+}
+
+////////////////////////////////////////////////////////////////
 // BINARY FILE WITH INPUT FRAMES: Saving current list
 ////////////////////////////////////////////////////////////////
 
@@ -398,12 +671,13 @@ BOOL KAO2_binfileSave()
 
         if (INVALID_HANDLE_VALUE == file)
         {
+            sprintf_s(g_lastMessage, (BUF_SIZE / 2), "Could not create that file.");
             return FALSE;
         }
 
-        WriteFile(file, (LPCVOID) TAS_BINFILE_HEADER, 0x08, NULL, NULL);
+        if (!KAO2_writeFile(file, (LPCVOID) TAS_BINFILE_HEADER, 0x08)) { return FALSE; }
 
-        WriteFile(file, (LPCVOID) &g_totalFrames, 0x04, NULL, NULL);
+        if (!KAO2_writeFile(file, (LPCVOID) &g_totalFrames, 0x04)) { return FALSE; }
 
         frame = g_frames;
 
@@ -411,15 +685,16 @@ BOOL KAO2_binfileSave()
         {
             if (NULL == frame)
             {
+                sprintf_s(g_lastMessage, (BUF_SIZE / 2), "NULL i-frame found. This should not happen...");
                 CloseHandle(file);
                 return FALSE;
             }
 
-            WriteFile(file, (LPCVOID) &(frame->sticks[0][0]), 0x04, NULL, NULL);
-            WriteFile(file, (LPCVOID) &(frame->sticks[0][1]), 0x04, NULL, NULL);
-            WriteFile(file, (LPCVOID) &(frame->sticks[1][0]), 0x04, NULL, NULL);
-            WriteFile(file, (LPCVOID) &(frame->sticks[1][1]), 0x04, NULL, NULL);
-            WriteFile(file, (LPCVOID) &(frame->buttons), 0x04, NULL, NULL);
+            if (!KAO2_writeFile(file, (LPCVOID) &(frame->sticks[0][0]), 0x04)) { return FALSE; }
+            if (!KAO2_writeFile(file, (LPCVOID) &(frame->sticks[0][1]), 0x04)) { return FALSE; }
+            if (!KAO2_writeFile(file, (LPCVOID) &(frame->sticks[1][0]), 0x04)) { return FALSE; }
+            if (!KAO2_writeFile(file, (LPCVOID) &(frame->sticks[1][1]), 0x04)) { return FALSE; }
+            if (!KAO2_writeFile(file, (LPCVOID) &(frame->buttons), 0x02)) { return FALSE; }
 
             frame = (frame->next);
         }
@@ -436,7 +711,8 @@ BOOL KAO2_binfileSave()
 
 BOOL KAO2_binfileLoad()
 {
-    DWORD a, b, btn;
+    DWORD a, b;
+    WORD buttons;
     float l_x, l_y, r_x, r_y;
     char buf[BUF_SIZE];
     FrameNode_t * frame, * prev, * new_head;
@@ -461,31 +737,33 @@ BOOL KAO2_binfileLoad()
 
         if (INVALID_HANDLE_VALUE == file)
         {
+            sprintf_s(g_lastMessage, (BUF_SIZE / 2), "Could not open that file.");
             return FALSE;
         }
 
-        ReadFile(file, (LPVOID) buf, 0x08, NULL, NULL);
+        if (!KAO2_readFile(file, (LPVOID) buf, 0x08)) { return FALSE; }
 
         if (0 != memcmp(buf, TAS_BINFILE_HEADER, 0x08))
         {
+            sprintf_s(g_lastMessage, (BUF_SIZE / 2), "Invalid data file header! Expected \"%s\".", TAS_BINFILE_HEADER);
             CloseHandle(file);
             return FALSE;
         }
 
-        ReadFile(file, (LPVOID) &b, 0x04, NULL, NULL);
+        if (!KAO2_readFile(file, (LPVOID) &b, 0x04)) { return FALSE; }
 
         prev = NULL;
         new_head = NULL;
 
         for (a = 0; a < b; a++)
         {
-            ReadFile(file, (LPVOID) &l_x, 0x04, NULL, NULL);
-            ReadFile(file, (LPVOID) &l_y, 0x04, NULL, NULL);
-            ReadFile(file, (LPVOID) &r_x, 0x04, NULL, NULL);
-            ReadFile(file, (LPVOID) &r_y, 0x04, NULL, NULL);
-            ReadFile(file, (LPVOID) &btn, 0x04, NULL, NULL);
+            if (!KAO2_readFile(file, (LPVOID) &l_x, 0x04)) { return FALSE; };
+            if (!KAO2_readFile(file, (LPVOID) &l_y, 0x04)) { return FALSE; };
+            if (!KAO2_readFile(file, (LPVOID) &r_x, 0x04)) { return FALSE; };
+            if (!KAO2_readFile(file, (LPVOID) &r_y, 0x04)) { return FALSE; };
+            if (!KAO2_readFile(file, (LPVOID) &buttons, 0x02)) { return FALSE; };
 
-            frame = FrameNode_create(l_x, l_y, r_x, r_y, btn, prev);
+            frame = FrameNode_create(l_x, l_y, r_x, r_y, buttons, prev);
 
             prev = frame;
 
@@ -550,12 +828,22 @@ HANDLE KAO2_findGameProcess()
 {
     HANDLE proc_handle;
     HWND game_window;
-    DWORD pids[(2 * BUF_SIZE)], i, count;
-    char buf[(2 * BUF_SIZE)], * file_name, * p;
+    DWORD pids[ENUMERATED_PROCESSES], i, count;
+    char buf[BUF_SIZE], * file_name, * p;
 
-    if (NULL != (game_window = FindWindow(KAO2_WINDOW_CLASSNAME, KAO2_WINDOW_NAME)))
+    /* Find game window */
+    if (NULL == (game_window = FindWindow(KAO2_WINDOW_CLASSNAME, KAO2_WINDOW_NAME)))
     {
-        if (FALSE != EnumProcesses(pids, (sizeof(DWORD) * (2 * BUF_SIZE)), &count))
+        sprintf_s(g_lastMessage, (BUF_SIZE / 2), "Could not locate \"%s\" window!", KAO2_WINDOW_NAME);
+    }
+    else
+    {
+        /* Enumerage processes */
+        if (!EnumProcesses(pids, (sizeof(DWORD) * ENUMERATED_PROCESSES), &count))
+        {
+            sprintf_s(g_lastMessage, (BUF_SIZE / 2), "EnumProcesses() failed!");
+        }
+        else
         {
             for (i = 0; i < count; i++)
             {
@@ -564,8 +852,8 @@ HANDLE KAO2_findGameProcess()
                 if ((NULL != proc_handle) && (INVALID_HANDLE_VALUE != proc_handle))
                 {
                     buf[0] = '\0';
-                    GetModuleFileNameEx(proc_handle, NULL, buf, (2 * BUF_SIZE));
-                    buf[(2 * BUF_SIZE - 1)] = '\0';
+                    GetModuleFileNameEx(proc_handle, NULL, buf, BUF_SIZE);
+                    buf[BUF_SIZE - 1] = '\0';
                     file_name = NULL;
 
                     for (p = buf; (*p); p++)
@@ -591,6 +879,8 @@ HANDLE KAO2_findGameProcess()
                     proc_handle = INVALID_HANDLE_VALUE;
                 }
             }
+
+            sprintf_s(g_lastMessage, (BUF_SIZE / 2), "No process module filename matches the expected executable name!");
         }
     }
 
@@ -617,7 +907,7 @@ BOOL KAO2_windowLoop()
         DispatchMessage(&message);
     }
 
-    return still_active;
+    return ((!g_quit) && still_active);
 }
 
 ////////////////////////////////////////////////////////////////
@@ -661,15 +951,15 @@ VOID KAO2_updateStickStaticAndEdits(const FrameNode_t * frame, int id, BOOL sett
 // for co-ords [LX][LY][RX][RY] of one of Gamepad Sticks
 ////////////////////////////////////////////////////////////////
 
-BOOL KAO2_stickEditNotify(HWND editbox, WORD msg, int id, int coord)
+BOOL KAO2_stickEditNotify(HWND editbox, WORD notify, int id, int coord)
 {
     int a, b;
-    char buf[16];
+    char buf[TINY_BUF_SIZE];
     float dummy;
 
-    if ((EN_CHANGE == msg) && (NULL != g_currentFrame))
+    if ((EN_CHANGE == notify) && (NULL != g_currentFrame))
     {
-        GetWindowText(editbox, buf, 16);
+        GetWindowText(editbox, buf, TINY_BUF_SIZE);
 
         dummy = strtof(buf, NULL);
 
@@ -700,7 +990,7 @@ BOOL KAO2_stickEditNotify(HWND editbox, WORD msg, int id, int coord)
 VOID KAO2_clearAndUpdateFrameGui(const FrameNode_t * frame)
 {
     int i;
-    DWORD buttons;
+    WORD buttons;
 
     for (i = 0; i < 2; i++)
     {
@@ -735,23 +1025,37 @@ VOID KAO2_clearAndUpdateFrameGui(const FrameNode_t * frame)
 
 VOID KAO2_showStatus(const char * msg)
 {
-    char buf[BUF_SIZE];
-    sprintf_s(buf, BUF_SIZE, "(re%s) %s", ((TM_REPLAY == g_TAS_mode) ? "play" : "cord"), msg);
-
-    SetWindowText(KAO2_statusLabel, buf);
+    SetWindowText(KAO2_statusLabel, msg);
     UpdateWindow(KAO2_mainWindow);
+}
+
+////////////////////////////////////////////////////////////////
+// WINAPI GUI: Show error message
+////////////////////////////////////////////////////////////////
+
+VOID KAO2_iAmError(const char * caption)
+{
+    char buf[BUF_SIZE];
+
+    KAO2_showStatus(caption);
+
+    if ('\0' != g_lastMessage[0])
+    {
+        sprintf_s(buf, BUF_SIZE, "%s\n\n%s", caption, g_lastMessage);
+
+        MessageBox(KAO2_mainWindow, buf, MSGBOX_ERROR_CAPTION, MB_ICONERROR);
+    }
 }
 
 ////////////////////////////////////////////////////////////////
 // TOOL-ASSISTED MANIPULATION: Write bytes to Kao2 game process
 ////////////////////////////////////////////////////////////////
 
-BOOL KAO2_writeMem(DWORD address, LPCVOID what, size_t length)
+BOOL KAO2_writeMem(DWORD address, LPCVOID from, size_t length)
 {
-    if (!WriteProcessMemory(KAO2_gameHandle, (LPVOID)address, what, length, NULL))
+    if (!WriteProcessMemory(KAO2_gameHandle, (LPVOID)address, from, length, NULL))
     {
-        sprintf_s(g_lastMessage, BUF_SIZE, "Could not write %d bytes to address 0x%08X!", length, address);
-
+        sprintf_s(g_lastMessage, (BUF_SIZE / 2), "Could not write %d bytes to address 0x%08X!", length, address);
         return FALSE;
     }
 
@@ -762,16 +1066,131 @@ BOOL KAO2_writeMem(DWORD address, LPCVOID what, size_t length)
 // TOOL-ASSISTED MANIPULATION: Read bytes from Kao2 game process
 ////////////////////////////////////////////////////////////////
 
-BOOL KAO2_readMem(DWORD address, LPVOID what, size_t length)
+BOOL KAO2_readMem(DWORD address, LPVOID into, size_t length)
 {
-    if (!ReadProcessMemory(KAO2_gameHandle, (LPVOID)address, what, length, NULL))
+    if (!ReadProcessMemory(KAO2_gameHandle, (LPVOID)address, into, length, NULL))
     {
-        sprintf_s(g_lastMessage, BUF_SIZE, "Could not read %d bytes from address 0x%08X!", length, address);
-
+        sprintf_s(g_lastMessage, (BUF_SIZE / 2), "Could not read %d bytes from address 0x%08X!", length, address);
         return FALSE;
     }
 
     return TRUE;
+}
+
+////////////////////////////////////////////////////////////////
+// TOOL-ASSISTED MANIPULATION: Inject anim-frame updating
+// synchronization code into "Kao the Kangaroo: Round 2" (retail)
+////////////////////////////////////////////////////////////////
+
+LONG KAO2_frameruleInjection()
+{
+    const FLOAT updatePortion = g_updateFramePortion;
+    const FLOAT stepTime      = (updatePortion / KAO2_ANIM_FPS);
+
+    if (CHECK_TAM_FLAG(FRAMERULE))
+    {
+        TAS_MACRO_STORE_DWORD(updatePortion, KAO2_CONST_TICK_FPORTION);
+        TAS_MACRO_STORE_DWORD(stepTime,      KAO2_CONST_TICK_STEPTIME);
+
+        TAS_MACRO_INJECT_CODE(KAO2_INJECTION_TICK[1], KAO2_CODE_TICK_ADDRESS);
+
+        return 1;
+    }
+    else
+    {
+        TAS_MACRO_INJECT_CODE(KAO2_INJECTION_TICK[0], KAO2_CODE_TICK_ADDRESS);
+
+        return 2;
+    }
+}
+
+////////////////////////////////////////////////////////////////
+// TOOL-ASSISTED MANIPULATION: Show text status and prepare
+// floating-point data values before injecting anim-frame
+// updating sycnrhonization code.
+////////////////////////////////////////////////////////////////
+
+VOID KAO2_frameruleInjectionPrepare(BOOL sendCode, float fps)
+{
+    char buf[BUF_SIZE];
+    LONG a = FALSE;
+    float fp;
+
+    if (fps <= KAO2_ANIM_FPS)
+    {
+        fps = KAO2_ANIM_FPS;
+        a = TRUE;
+    }
+    else if (fps >= KAO2_MAX_FPS)
+    {
+        fps = KAO2_MAX_FPS;
+        a = TRUE;
+    }
+
+    if (a)
+    {
+        sprintf_s(buf, BUF_SIZE, "%.2f", fps);
+        SetWindowText(KAO2_frameRuleEditBox, buf);
+    }
+
+    fp = (KAO2_ANIM_FPS / fps);
+    a = (LONG) (fps / KAO2_MIN_FPS);  // ((1.0 / fp) * (KAO2_ANIM_FPS / KAO2_MIN_FPS))
+
+    sprintf_s
+    (
+        buf, BUF_SIZE,
+            "| Anim-frame portion per update: | %.5f of 1.0 |\n"
+            "| Max updates per Display Callback (delta %.2f s): | %4i |\n"
+            "| Frame advance on lowest (%d FPS) framerate: | %.5f |",
+        fp, (1.0 / KAO2_MIN_FPS), a, KAO2_MIN_FPS, (a * fp)
+    );
+    SetWindowText(KAO2_frameRuleStatus, buf);
+
+    g_updateFramePortion = fp;
+
+    if (sendCode)
+    {
+        MACRO_FRAMERULE_INJECTION
+    }
+}
+
+////////////////////////////////////////////////////////////////
+// TOOL-ASSISTED MANIPULATION: Make dynamic changes to
+// "Kao the Kangaroo: Round 2" (retail) game code when
+// switching Tool-Assisted Modes.
+////////////////////////////////////////////////////////////////
+
+BOOL KAO2_nextInjections()
+{
+    const BYTE * code;
+    size_t length;
+
+    /* InputManager - Semaphore unlock */
+
+    BYTE
+    TAS_MACRO_STORE_FLAG(0x00, KAO2_INPUTS_SEMAPHORE_ADDRESS);
+
+    /* InputManager - Choosing algorithm */
+
+    if (CHECK_TAM_FLAG(REC_OR_PLAY))
+    {
+        code = KAO2_INJECTION_RECMODE;
+        length = sizeof(KAO2_INJECTION_RECMODE);
+    }
+    else
+    {
+        code = KAO2_INJECTION_PLAYMODE;
+        length = sizeof(KAO2_INJECTION_PLAYMODE);
+    }
+
+    if (!KAO2_writeMem(KAO2_CODE_INPUTS_ADDRESS, (LPCVOID)code, length))
+    {
+        return FALSE;
+    }
+
+    /* Continue injecting new code... :) */
+
+    return KAO2_frameruleInjection();
 }
 
 ////////////////////////////////////////////////////////////////
@@ -781,74 +1200,23 @@ BOOL KAO2_readMem(DWORD address, LPVOID what, size_t length)
 
 BOOL KAO2_firstInjection()
 {
-    BYTE flag = 0x00;
-    const BYTE * code;
-    size_t length;
-
-    /* InputManager - Semaphore unlock */
-
-    if (!KAO2_writeMem(KAO2_INPUTS_SEMAPHORE_ADDRESS, &flag, 0x01))
-    {
-        return FALSE;
-    }
-
-    /* InputManager - Choosing algorithm */
-
-    if (TM_REPLAY == g_TAS_mode)
-    {
-        code = KAO2_INJECTION_PLAYMODE;
-        length = sizeof(KAO2_INJECTION_PLAYMODE);
-    }
-    else
-    {
-        code = KAO2_INJECTION_RECMODE;
-        length = sizeof(KAO2_INJECTION_RECMODE);
-    }
-
-    if (!KAO2_writeMem(KAO2_CODE_INPUTS_ADDRESS, (LPCVOID)code, length))
-    {
-        return FALSE;
-    }
-
-    /* eKao2Gamelet::onTick() - stable framerate */
-
-    if (!KAO2_writeMem(KAO2_CODE_TICK_ADDRESS, (LPCVOID)KAO2_INJECTION_TICK, sizeof(KAO2_INJECTION_TICK)))
-    {
-        return FALSE;
-    }
-
     /* eAnimNotyfier::onUpdate() - fix double notifies */
 
-    if (!KAO2_writeMem(KAO2_CODE_ANIMNOTYFIER_FIXA_ADDRESS, (LPCVOID)KAO2_INJECTION_ANIMNOTYFIER_FIXA, sizeof(KAO2_INJECTION_ANIMNOTYFIER_FIXA)))
-    {
-        return FALSE;
-    }
+    TAS_MACRO_INJECT_CODE(KAO2_INJECTION_ANIMNOTYFIER_FIXA, KAO2_CODE_ANIMNOTYFIER_FIXA_ADDRESS);
 
-    if (!KAO2_writeMem(KAO2_CODE_ANIMNOTYFIER_FIXB_ADDRESS, (LPCVOID)KAO2_INJECTION_ANIMNOTYFIER_FIXB, sizeof(KAO2_INJECTION_ANIMNOTYFIER_FIXB)))
-    {
-        return FALSE;
-    }
+    TAS_MACRO_INJECT_CODE(KAO2_INJECTION_ANIMNOTYFIER_FIXB, KAO2_CODE_ANIMNOTYFIER_FIXB_ADDRESS);
 
     /* Micro messages (FPS and TAS status, visible in-game) */
 
-    if (!KAO2_writeMem(KAO2_TASMSG_ADDRESS, (LPCVOID)KAO2_TASMSG_STANDBY, 0x01 + strlen(KAO2_TASMSG_STANDBY)))
-    {
-        return FALSE;
-    }
+    TAS_MACRO_INJECT_STR(KAO2_TASMSG_STANDBY, KAO2_TASMSG_ADDRESS);
 
-    if (!KAO2_writeMem(KAO2_AVGFPS_ADDRESS, (LPCVOID)KAO2_AVGFPS, 0x01 + strlen(KAO2_AVGFPS)))
-    {
-        return FALSE;
-    }
+    TAS_MACRO_INJECT_STR(KAO2_AVGFPS, KAO2_AVGFPS_ADDRESS);
 
-    if (!KAO2_writeMem(KAO2_CODE_MSGS_ADDRESS, (LPCVOID)KAO2_INJECTION_MSGS, sizeof(KAO2_INJECTION_MSGS)))
-    {
-        return FALSE;
-    }
+    TAS_MACRO_INJECT_CODE(KAO2_INJECTION_MSGS, KAO2_CODE_MSGS_ADDRESS);
 
-    /* Cool and good */
+    /* Continue injecting new code... :) */
 
-    return TRUE;
+    return KAO2_nextInjections();
 }
 
 ////////////////////////////////////////////////////////////////
@@ -857,32 +1225,34 @@ BOOL KAO2_firstInjection()
 
 BOOL KAO2_runRecordingAlgorithm()
 {
-    DWORD a, b, rec = TRUE, address, buttons;
-    char buf[TINY_BUF_SIZE];
+    DWORD a, b, rec = TRUE;
+    char buf[BUF_SIZE];
     BYTE flag;
-    float sticks[2][2];
-    FrameNode_t * frame, * prev_frame = NULL;
+    FrameNode_t dummy;
+    FrameNode_t * dynamic_frame;
 
     /* Remove current set of i-frames... */
 
-    FrameNode_remove(&g_frames);
+    FrameNode_remove(& g_frames);
     g_totalFrames = 0;
 
-    //@ /* DEBUG with counters */
-    //@ a = 0;
-    //@ char debug_buf[BUF_SIZE];
-    //@ if (!KAO2_writeMem(0x00626A24, &a, 0x04)) { return FALSE; }
-    //@ if (!KAO2_writeMem(0x00626A28, &a, 0x04)) { return FALSE; }
+    g_currentFrame = (& dummy);
+    FrameNode_reset(& dummy);
+    KAO2_clearAndUpdateFrameGui(NULL);
 
     while (rec)
     {
-        /* Micro message */
+        /* Status message (in-game + tool) */
 
-        sprintf_s(buf, TINY_BUF_SIZE, KAO2_TASMSG_REC, g_totalFrames);
+        a = (1 + g_totalFrames);
+
+        sprintf_s(buf, SMALL_BUF_SIZE, KAO2_TASMSG_REC, a);
         if (!KAO2_writeMem(KAO2_TASMSG_ADDRESS, buf, 0x01 + strlen(buf)))
         {
             return FALSE;
         }
+
+        TAS_MACRO_RECORDING_MSG("");
 
         /* Is this loading mode? */
 
@@ -893,20 +1263,16 @@ BOOL KAO2_runRecordingAlgorithm()
 
         if (0x01 == flag)
         {
-            /* Zanotuj to i czekaj na załadowanie */
+            /* Remember that the game is loading and wait */
 
-            buttons = (0x01 << KF_ACTION_LOADING);
+            FrameNode_reset(& dummy);
+            dummy.buttons = (0x01 << KF_ACTION_LOADING);
 
             TAS_MACRO_STORE_FLAG(0x00, KAO2_INPUTS_SEMAPHORE_ADDRESS);
 
             TAS_MACRO_WAIT_FLAG_EQ(0x01, KAO2_LOADING_FLAG_ADDRESS);
 
             TAS_MACRO_STORE_FLAG(0x02, KAO2_INPUTS_SEMAPHORE_ADDRESS);
-
-            sticks[0][0] = 0;
-            sticks[0][1] = 0;
-            sticks[1][0] = 0;
-            sticks[1][1] = 0;
         }
         else
         {
@@ -914,74 +1280,86 @@ BOOL KAO2_runRecordingAlgorithm()
 
             TAS_MACRO_STORE_FLAG(0x02, KAO2_INPUTS_SEMAPHORE_ADDRESS);
 
-            /* Kao accepts the request */
-            /* (if unlocks now, processes input from last frame) */
+            TAS_MACRO_RECORDING_MSG("(set focus to the game window now!)");
 
-            TAS_MACRO_WAIT_FLAG_NE(0x03, KAO2_INPUTS_SEMAPHORE_ADDRESS);
+            /* Kao accepts the request - wait for synchronization. */
 
-            /* Read sticks and buttons */
+            a = CHECK_TAM_FLAG(STEP_BY_STEP);
 
-            address = KAO2_PAD_STICKS_ADDRESS;
+            TAS_MACRO_WAIT_FLAG_NE_WINLOOP(0x03, KAO2_INPUTS_SEMAPHORE_ADDRESS);
 
-            for (a = 0; a < 2; a++)
+            if (!a)
             {
-                for (b = 0; b < 2; b++)
-                {
-                    if (!KAO2_readMem(address, &(sticks[a][b]), 0x04))
-                    {
-                        return FALSE;
-                    }
+                a = CHECK_TAM_FLAG(STEP_BY_STEP);
 
-                    address += 0x04;
-                }
-            }
+                /* Step-by-step mode was disabled before this request */
+                /* was sent. Read inputs prepared by the game. */
 
-            address = KAO2_BUTTONS_LIST_ADDRESS;
-            buttons = 0;
-            b = 0x01;
-
-            for (a = 0; a < ((1 << 4) - 1); a++)
-            {
-                if (!KAO2_readMem(address, &flag, 0x01))
+                if (!FrameNode_readFromGame(& dummy))
                 {
                     return FALSE;
                 }
 
-                if (flag)
+                /* Present input frame in GUI */
+
+                TAS_MACRO_SHOW_INPUTS
+            }
+
+            if (a)
+            {
+                /* Step-by-step mode was enabled before this request */
+                /* was sent, or was enabled just-in-time while waiting */
+                /* for synchronization, so wait until the user prepares */
+                /* his own set of inputs to override game's set. */
+
+                a = (1 + g_totalFrames);
+                TAS_MACRO_RECORDING_MSG
+                (
+                    "(uncheck \"Step-by-Step\" to unfreeze the game on next frame;"
+                    " press \"I-Frame Advance\" when the new input set ready)"
+                );
+
+                if (!CHECK_TAM_FLAG(CLONE_FRAME))
                 {
-                    buttons |= b;
+                    FrameNode_reset(& dummy);
+                    KAO2_clearAndUpdateFrameGui(NULL);
                 }
 
-                b = (b << 1);
-                address += 0x04;
+                DISABLE_CTRL_FLAG(IFRAMEADV);
+
+                do
+                {
+                    TAS_MACRO_WINDOWLOOP
+                }
+                while (!CHECK_CTRL_FLAG(IFRAMEADV));
+
+                TAS_MACRO_RECORDING_MSG("");
+
+                /* Replace in-game input status */
+
+                if (!FrameNode_writeToGame(& dummy))
+                {
+                    return FALSE;
+                }
             }
         }
 
-        /* Create input frame */
+        /* Create dynamically-allocated input frame */
 
-        frame = FrameNode_create
-        (
-            sticks[0][0], sticks[0][1],
-            sticks[1][0], sticks[1][1],
-            buttons, prev_frame
-        );
+        dynamic_frame = FrameNode_createFromCopy((& dummy), (dummy.prev));
 
         g_totalFrames++;
 
-        if (NULL == prev_frame)
+        if (NULL == (dummy.prev))
         {
-            g_frames = frame;
+            g_frames = dynamic_frame;
         }
 
-        prev_frame = frame;
+        (dummy.prev) = dynamic_frame;
 
-        /* Present input frame in GUI */
+        /* Condition for stopping the recording */
 
-        TAS_MACRO_SHOW_INPUTS;
-
-        /* Warunek zakończenia nagrywania */
-
-        if ((0x01 << KF_R1) & buttons)
+        if ((0x01 << KF_R1) & (dummy.buttons))
         {
             rec = FALSE;
         }
@@ -994,25 +1372,11 @@ BOOL KAO2_runRecordingAlgorithm()
         return FALSE;
     }
 
-    /* Gra nie musi czekać następnym razem */
+    /* The game will not have to wait on its current input loop */
 
     TAS_MACRO_STORE_FLAG(0x00, KAO2_INPUTS_SEMAPHORE_ADDRESS);
 
-    //@ /* DEBUG with counters */
-    //@ if (!KAO2_readMem(0x00626A24, &a, 0x04)) { return FALSE; }
-    //@ if (!KAO2_readMem(0x00626A28, &b, 0x04)) { return FALSE; }
-    //@ sprintf_s
-    //@ (
-    //@     debug_buf, BUF_SIZE,
-    //@         "g_totalFrames  = %5d\r\n" \
-    //@         "skipped frames = %5d\r\n" \
-    //@         "TAS frames     = %5d\r\n",
-    //@     g_totalFrames, a, b
-    //@ );
-    //@ MessageBox(KAO2_mainWindow, debug_buf, "Emulator", MB_ICONINFORMATION);
-
-    frame = NULL;
-    TAS_MACRO_SHOW_INPUTS;
+    KAO2_clearAndUpdateFrameGui(NULL);
 
     return TRUE;
 }
@@ -1023,18 +1387,13 @@ BOOL KAO2_runRecordingAlgorithm()
 
 BOOL KAO2_runReplayingAlgorithm()
 {
-    DWORD a, b, counter = 1, address;
+    DWORD a, b, counter = 1;
     char buf[TINY_BUF_SIZE];
     BYTE flag;
-    FrameNode_t * frame = g_frames;
 
-    //@ /* DEBUG with counters */
-    //@ a = 0;
-    //@ char debug_buf[BUF_SIZE];
-    //@ if (!KAO2_writeMem(0x00626A24, &a, 0x04)) { return FALSE; }
-    //@ if (!KAO2_writeMem(0x00626A28, &a, 0x04)) { return FALSE; }
+    g_currentFrame = g_frames;
 
-    while (NULL != frame)
+    while (NULL != g_currentFrame)
     {
         /* Micro message */
 
@@ -1050,22 +1409,21 @@ BOOL KAO2_runReplayingAlgorithm()
 
         /* Is this loading mode? */
 
-        if ((0x01 << KF_ACTION_LOADING) & (frame->buttons))
+        if ((0x01 << KF_ACTION_LOADING) & (g_currentFrame->buttons))
         {
-            /* Odblokuj grę - musi przeprocesować inputy */
-            /* z poprzedniej klatki... */
+            /* Unlock the game - it must process inputs from the last frame... */
 
             TAS_MACRO_STORE_FLAG(0x00, KAO2_INPUTS_SEMAPHORE_ADDRESS);
 
-            /* Czekaj na wejście do ładowania*/
+            /* Wait for the loading to begin */
 
             TAS_MACRO_WAIT_FLAG_EQ(0x00, KAO2_LOADING_FLAG_ADDRESS);
 
-            /* Zablokuj input */
+            /* Block inputs (just in case) */
 
             TAS_MACRO_STORE_FLAG(0x02, KAO2_INPUTS_SEMAPHORE_ADDRESS);
 
-            /* Czekaj na wyjście z ładowania*/
+            /* Wait for the loading to finish */
 
             TAS_MACRO_WAIT_FLAG_EQ(0x01, KAO2_LOADING_FLAG_ADDRESS);
         }
@@ -1078,49 +1436,21 @@ BOOL KAO2_runReplayingAlgorithm()
             /* Wait for Kao to process game logic (from prev frame) */
             /* and clear input data (for this frame) */
 
-            TAS_MACRO_WAIT_FLAG_NE(0x03, KAO2_INPUTS_SEMAPHORE_ADDRESS);
+            TAS_MACRO_WAIT_FLAG_NE_WINLOOP(0x03, KAO2_INPUTS_SEMAPHORE_ADDRESS);
 
             /* Send data for this input-frame */
 
-            address = KAO2_PAD_STICKS_ADDRESS;
-
-            for (a = 0; a < 2; a++)
+            if (!FrameNode_writeToGame(g_currentFrame))
             {
-                for (b = 0; b < 2; b++)
-                {
-                    if (!KAO2_writeMem(address, &(frame->sticks[a][b]), 0x04))
-                    {
-                        return FALSE;
-                    }
-
-                    address += 0x04;
-                }
-            }
-
-            address = KAO2_BUTTONS_LIST_ADDRESS;
-            flag = 0x01;
-            b = 0x01;
-
-            for (a = 0; a < ((1 << 4) - 1); a++)
-            {
-                if (b & (frame->buttons))
-                {
-                    if (!KAO2_writeMem(address, &flag, 0x01))
-                    {
-                        return FALSE;
-                    }
-                }
-
-                b = (b << 1);
-                address += 0x04;
+                return FALSE;
             }
         }
 
-        /* Gra ruszy z kopyta na początku kolejnej iteracji */
-        /* lub po wyjściu z pętelki -- na razie czeka aż */
-        /* flaga zmieni się z "0x03" na coś innego */
+        /* The game will unfreeze once the the next iteration */
+        /* of this loop starts, or when this loop ends - until then */
+        /* it waits for the semaphore to change from "0x03" to anything else */
 
-        frame = (frame->next);
+        g_currentFrame = (g_currentFrame->next);
         counter++;
     }
 
@@ -1131,25 +1461,11 @@ BOOL KAO2_runReplayingAlgorithm()
         return FALSE;
     }
 
-    /* Odblokuj grę od kolejnej i-klatki */
+    /* Unlocks the game from its current input loop */
 
     TAS_MACRO_STORE_FLAG(0x00, KAO2_INPUTS_SEMAPHORE_ADDRESS);
 
-    //@ /* DEBUG with counters */
-    //@ if (!KAO2_readMem(0x00626A24, &a, 0x04)) { return FALSE; }
-    //@ if (!KAO2_readMem(0x00626A28, &b, 0x04)) { return FALSE; }
-    //@ sprintf_s
-    //@ (
-    //@     debug_buf, BUF_SIZE,
-    //@         "g_totalFrames  = %5d\r\n" \
-    //@         "skipped frames = %5d\r\n" \
-    //@         "TAS frames     = %5d\r\n",
-    //@     g_totalFrames, a, b
-    //@ );
-    //@ MessageBox(KAO2_mainWindow, debug_buf, "Emulator", MB_ICONINFORMATION);
-
-    frame = NULL;
-    TAS_MACRO_SHOW_INPUTS;
+    KAO2_clearAndUpdateFrameGui(NULL);
 
     return TRUE;
 }
@@ -1215,8 +1531,7 @@ VOID KAO2_genInputFrameText(char * result, FrameNode_t * frame, int id)
     sprintf_s
     (
         result, BUF_SIZE, "(%5d/%5d) [%s] [%s] %c%c%c%c %s %s %s %s %s %s %s [%s]",
-            id,
-            g_totalFrames,
+            (1 + id), g_totalFrames,
             KAO2_getDirectionText(frame->sticks[0][0], frame->sticks[0][1]),
             KAO2_getDirectionText(frame->sticks[1][0], - frame->sticks[1][1]),
             ((0x01 << KF_JUMP) & frame->buttons) ? 'x' : ' ',
@@ -1318,13 +1633,13 @@ VOID KAO2_LB_selectInputFrameOrUpdateGui(int lb_id, BOOL update)
 
             SendMessage(KAO2_listBoxFrames, LB_SETCURSEL, (WPARAM) lb_id, (LPARAM) NULL);
 
-            sprintf_s(buf, BUF_SIZE, "(Updated frame #%05d)", g_currentFrameId);
+            sprintf_s(buf, BUF_SIZE, "(Updated frame #%05d)", (1 + g_currentFrameId));
         }
         else
         {
             SendMessage(KAO2_listBoxFrames, LB_SETCURSEL, (WPARAM) lb_id, (LPARAM) NULL);
 
-            sprintf_s(buf, BUF_SIZE, "(Selected frame #%05d)", g_currentFrameId);
+            sprintf_s(buf, BUF_SIZE, "(Selected frame #%05d)", (1 + g_currentFrameId));
         }
 
         SetWindowText(KAO2_listBoxStatus, buf);
@@ -1379,7 +1694,7 @@ VOID KAO2_LB_insertNewInputFrame()
 
     if (NULL == g_frames)
     {
-        g_frames = FrameNode_create(0, 0, 0, 0, 0, NULL);
+        g_frames = FrameNode_createEmpty(NULL);
         g_currentFrame = g_frames;
         g_currentFrameId = 0;
         g_totalFrames = 1;
@@ -1406,20 +1721,19 @@ VOID KAO2_LB_insertNewInputFrame()
             g_currentFrameId++;
         }
 
-        g_currentFrame = FrameNode_create
-        (
-            prev_frame->sticks[0][0],
-            prev_frame->sticks[0][1],
-            prev_frame->sticks[1][0],
-            prev_frame->sticks[1][1],
-            prev_frame->buttons,
-            prev_frame
-        );
+        if (CHECK_TAM_FLAG(CLONE_FRAME))
+        {
+            g_currentFrame = FrameNode_createFromCopy(prev_frame, prev_frame);
+        }
+        else
+        {
+            g_currentFrame = FrameNode_createEmpty(prev_frame);
+        }
 
         g_totalFrames++;
     }
 
-    sprintf_s(buf, TINY_BUF_SIZE, "Inserted frame #%03d.", g_currentFrameId);
+    sprintf_s(buf, TINY_BUF_SIZE, "Inserted frame #%03d.", (1 + g_currentFrameId));
     SetWindowText(KAO2_listBoxStatus, buf);
 
     KAO2_LB_refreshFrameListBox(-1);
@@ -1433,7 +1747,7 @@ VOID KAO2_LB_insertNewInputFrame()
 
 BOOL KAO2_LB_removeCurrentInputFrame()
 {
-    int i = g_currentFrameId;
+    int i = (1 + g_currentFrameId);
     char buf[BUF_SIZE];
 
     FrameNode_t * prev_frame;
@@ -1524,7 +1838,6 @@ LRESULT CALLBACK KAO2_winProcAnyStick(int id, HWND hWnd, UINT Msg, WPARAM wParam
     struct { FLOAT x; FLOAT y; } fp;
 
     char buf[BUF_SIZE];
-    FrameNode_t * frame;
 
     switch (Msg)
     {
@@ -1545,16 +1858,14 @@ LRESULT CALLBACK KAO2_winProcAnyStick(int id, HWND hWnd, UINT Msg, WPARAM wParam
             Ellipse(ps.hdc, 1, 1, rect.right - 1, rect.bottom - 1);
             Rectangle(ps.hdc, halves.x - 2, halves.y - 2, halves.x + 3, halves.y + 3);
 
-            frame = (NULL != g_paintedFrame) ? g_paintedFrame : g_currentFrame;
-
-            if (NULL != frame)
+            if (NULL != g_currentFrame)
             {
                 SetDCPenColor(ps.hdc, RGB(255, 0, 0));
 
                 /* Clamped direction (-1.f to +1.f) extended */
                 /* to the size of the half of square control */
-                fp.x = MACRO_CLAMPF((frame->sticks[id][0]), (-1.f), (+1.f)) * halves.x;
-                fp.y = MACRO_CLAMPF((frame->sticks[id][1]), (-1.f), (+1.f)) * halves.y;
+                fp.x = MACRO_CLAMPF((g_currentFrame->sticks[id][0]), (-1.f), (+1.f)) * halves.x;
+                fp.y = MACRO_CLAMPF((g_currentFrame->sticks[id][1]), (-1.f), (+1.f)) * halves.y;
 
                 /* Line end point on the square control. */
                 /* Notice how Left Stick is inverted on Y-axis, */
@@ -1635,22 +1946,63 @@ LRESULT CALLBACK KAO2_winProcRightStick(HWND hWnd, UINT Msg, WPARAM wParam, LPAR
 }
 
 ////////////////////////////////////////////////////////////////
+// WINAPI GUI: Indirect callback procedure
+// for accepting input in an EditBox control
+////////////////////////////////////////////////////////////////
+
+LRESULT CALLBACK KAO2_winProcEditFramerule(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam)
+{
+    char buf[TINY_BUF_SIZE];
+    float fps;
+
+    if ((WM_KEYDOWN == Msg) && CHECK_CTRL_FLAG(ALLOWBTNS) && (VK_RETURN == wParam))
+    {
+        DISABLE_CTRL_FLAG(ALLOWBTNS)
+
+        GetWindowText(hWnd, buf, TINY_BUF_SIZE);
+
+        fps = strtof(buf, NULL);
+
+        if ((HUGE_VAL == errno) || (ERANGE == errno))
+        {
+            fps = 0;
+        }
+        else
+        {
+            fps = MACRO_CLAMPF(fps, KAO2_ANIM_FPS, KAO2_MAX_FPS);
+        }
+
+        KAO2_frameruleInjectionPrepare(TRUE, fps);
+
+        ENABLE_CTRL_FLAG(ALLOWBTNS)
+        return 0;
+    }
+
+    return CallWindowProc(KAO2_editFrameruleProcedure, hWnd, Msg, wParam, lParam);
+}
+
+////////////////////////////////////////////////////////////////
 // WINAPI GUI: Callback procedure for the main window of this tool
 ////////////////////////////////////////////////////////////////
 
 LRESULT CALLBACK KAO2_windowProcedure(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam)
 {
+    BOOL check_more_buttons = TRUE;
     DWORD a, b;
+    char buf[BUF_SIZE];
 
     switch (Msg)
     {
+        /* Main window destroyed */
         case WM_DESTROY:
         {
             PostQuitMessage(0);
+            g_quit = TRUE;
 
             break;
         }
 
+        /* Main window closed */
         case WM_CLOSE:
         {
             DestroyWindow(hWnd);
@@ -1658,264 +2010,410 @@ LRESULT CALLBACK KAO2_windowProcedure(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM
             break;
         }
 
+        /* Left mouse button pressed */
+        /* (skipping BUTTONS ALLOWED control flag) */
         case WM_LBUTTONDOWN:
         {
-            if (g_allowButtons)
-            {
-                g_allowButtons = FALSE;
-
-                for (a = 0; a < 2; a++)
-                {
-                    SendMessage(KAO2_staticBoxSticks[a], WM_LBUTTONDOWN, wParam, lParam);
-                }
-
-                g_allowButtons = TRUE;
-            }
+            SendMessage(KAO2_staticBoxSticks[0], WM_LBUTTONDOWN, wParam, lParam);
+            SendMessage(KAO2_staticBoxSticks[1], WM_LBUTTONDOWN, wParam, lParam);
 
             break;
         }
 
+        /* Command from some child control */
         case WM_COMMAND:
         {
-            if (g_allowButtons)
+            switch (LOWORD(wParam))
             {
-                g_allowButtons = FALSE;
-
-                switch (LOWORD(wParam))
+                /* Attach KAO2 game process */
+                case IDM_BUTTON_ATTACH:
                 {
-                    case BUTTON_ATTACH:
+                    if (CHECK_CTRL_FLAG(ALLOWBTNS) && WPARAM_CLICKED)
                     {
-                        if (BN_CLICKED == HIWORD(wParam))
+                        DISABLE_CTRL_FLAG(ALLOWBTNS)
+
+                        KAO2_gameHandle = KAO2_findGameProcess();
+
+                        if (INVALID_HANDLE_VALUE == KAO2_gameHandle)
                         {
-                            KAO2_gameHandle = KAO2_findGameProcess();
+                            KAO2_iAmError("Could not attach the \"kao2.exe\" game process!");
+                        }
+                        else
+                        {
+                            KAO2_showStatus("KAO2 attached...");
 
-                            if (INVALID_HANDLE_VALUE == KAO2_gameHandle)
+                            if (KAO2_firstInjection())
                             {
-                                KAO2_showStatus(".");
-
-                                MessageBox(KAO2_mainWindow, "Could not attach the \"kao2.exe\" game process!", "Epic fail!", MB_ICONERROR);
+                                KAO2_showStatus("KAO2 injected and ready!");
                             }
                             else
                             {
-                                KAO2_showStatus("KAO2 attached...");
-
-                                if (KAO2_firstInjection())
-                                {
-                                    KAO2_showStatus("KAO2 injected and ready!");
-                                }
-                                else
-                                {
-                                    KAO2_showStatus(".");
-
-                                    MessageBox(KAO2_mainWindow, g_lastMessage, "Failed to inject TAS-communication code!", MB_ICONERROR);
-                                }
+                                KAO2_iAmError("Failed to inject TAS-communication code!");
                             }
-
-                            g_allowButtons = TRUE;
-                            return 0;
                         }
 
-                        break;
+                        ENABLE_CTRL_FLAG(ALLOWBTNS)
+                        return 0;
                     }
 
-                    case BUTTON_RUN:
+                    check_more_buttons = FALSE;
+                    break;
+                }
+
+                /* Run TAS algorithm */
+                case IDM_BUTTON_RUN:
+                {
+                    if (CHECK_CTRL_FLAG(ALLOWBTNS) && WPARAM_CLICKED)
                     {
-                        if (BN_CLICKED == HIWORD(wParam))
+                        DISABLE_CTRL_FLAG(ALLOWBTNS)
+
+                        MACRO_ASSERT_GAME_HANDLE
+                        else if (CHECK_TAM_FLAG(REC_OR_PLAY))
                         {
-                            if (INVALID_HANDLE_VALUE == KAO2_gameHandle)
+                            a = 0;
+                            TAS_MACRO_RECORDING_MSG("")
+
+                            if (KAO2_runRecordingAlgorithm())
                             {
-                                KAO2_showStatus("Please attach \"kao2.exe\" first!");
-                            }
-                            else if (TM_REPLAY == g_TAS_mode)
-                            {
-                                KAO2_showStatus("Please wait, replaying inputs...");
-
-                                if (KAO2_runReplayingAlgorithm())
-                                {
-                                    KAO2_showStatus("Done and ready.");
-                                }
-                                else
-                                {
-                                    KAO2_showStatus(".");
-
-                                    MessageBox(KAO2_mainWindow, g_lastMessage, "Jeez", MB_ICONERROR);
-                                }
-
-                                g_paintedFrame = NULL;
+                                KAO2_showStatus("Done and ready.");
                             }
                             else
                             {
-                                KAO2_showStatus("Please wait, recording inputs... (cancel in-game with [SELECT])");
+                                /* Semaphore unlock in case of a sudden shutdown */
+                                a = 0;
+                                KAO2_writeMem(KAO2_INPUTS_SEMAPHORE_ADDRESS, &a, 0x01);
 
-                                if (KAO2_runRecordingAlgorithm())
-                                {
-                                    KAO2_showStatus("Done and ready.");
-                                }
-                                else
-                                {
-                                    KAO2_showStatus(".");
-
-                                    MessageBox(KAO2_mainWindow, g_lastMessage, "Jeez", MB_ICONERROR);
-                                }
-
-                                g_currentFrame = NULL;
-                                g_paintedFrame = NULL;
-                                g_currentFrameId = (-1);
-                                g_currentPage = 0;
-
-                                KAO2_LB_refreshFrameListBox(-1);
+                                KAO2_iAmError("Unable to continue execution of the input-reading algorithm!");
                             }
 
-                            g_allowButtons = TRUE;
-                            return 0;
-                        }
-
-                        break;
-                    }
-
-                    case BUTTON_PLAYMODE:
-                    case BUTTON_RECMODE:
-                    {
-                        if (BN_CLICKED == HIWORD(wParam))
-                        {
-                            g_TAS_mode = (LOWORD(wParam) == BUTTON_PLAYMODE) ? TM_REPLAY : TM_RECORD;
-
-                            if (INVALID_HANDLE_VALUE == KAO2_gameHandle)
-                            {
-                                KAO2_showStatus("Please attach \"kao2.exe\" first!");
-                            }
-                            else if (KAO2_firstInjection())
-                            {
-                                KAO2_showStatus("<- Mode changed.");
-                            }
-                            else
-                            {
-                                KAO2_showStatus(".");
-
-                                MessageBox(KAO2_mainWindow, g_lastMessage, "Failed to inject TAS-communication code!", MB_ICONERROR);
-                            }
-
-                            g_allowButtons = TRUE;
-                            return 0;
-                        }
-
-                        break;
-                    }
-
-                    case BUTTON_OPEN_FILE:
-                    {
-                        if (BN_CLICKED == HIWORD(wParam))
-                        {
-                            if (KAO2_binfileLoad())
-                            {
-                                g_currentPage = 0;
-                                KAO2_LB_refreshFrameListBox(-1);
-
-                                KAO2_showStatus("New set of frames loaded!");
-                            }
-                            else
-                            {
-                                MessageBox(KAO2_mainWindow, "Error while loading input frames...", "", MB_ICONERROR);
-                            }
-
-                            g_allowButtons = TRUE;
-                            return 0;
-                        }
-
-                        break;
-                    }
-
-                    case BUTTON_SAVE_FILE:
-                    {
-                        if (BN_CLICKED == HIWORD(wParam))
-                        {
-                            if (KAO2_binfileSave())
-                            {
-                                KAO2_showStatus("Your frame set is safely stored!");
-                            }
-                            else
-                            {
-                                MessageBox(KAO2_mainWindow, "Error while saving input frames...", "", MB_ICONERROR);
-                            }
-
-                            g_allowButtons = TRUE;
-                            return 0;
-                        }
-
-                        break;
-                    }
-
-                    case BUTTON_CLEAR_ALL:
-                    {
-                        if (BN_CLICKED == HIWORD(wParam))
-                        {
                             g_currentFrame = NULL;
                             g_currentFrameId = (-1);
                             g_currentPage = 0;
 
-                            KAO2_clearAndUpdateFrameGui(NULL);
-
-                            FrameNode_remove(&g_frames);
-                            g_totalFrames = 0;
-
                             KAO2_LB_refreshFrameListBox(-1);
-                            KAO2_showStatus("All input frames have been deleted...");
-
-                            g_allowButtons = TRUE;
-                            return 0;
                         }
-
-                        break;
-                    }
-
-                    case BUTTON_PREV_PAGE:
-                    case BUTTON_NEXT_PAGE:
-                    {
-                        if (BN_CLICKED == HIWORD(wParam))
+                        else
                         {
-                            g_currentFrame = NULL;
-                            g_currentFrameId = (-1);
-                            /* "currentPage" zostaje */
+                            KAO2_showStatus("Please wait, replaying inputs...");
 
-                            KAO2_LB_refreshFrameListBox((LOWORD(wParam) == BUTTON_PREV_PAGE) ? LEFT : RIGHT);
-
-                            g_allowButtons = TRUE;
-                            return 0;
-                        }
-
-                        break;
-                    }
-
-                    case BUTTON_INSERT_FRAME:
-                    {
-                        if (BN_CLICKED == HIWORD(wParam))
-                        {
-                            KAO2_LB_insertNewInputFrame();
-
-                            g_allowButtons = TRUE;
-                            return 0;
-                        }
-
-                        break;
-                    }
-
-                    case BUTTON_REMOVE_FRAME:
-                    {
-                        if (BN_CLICKED == HIWORD(wParam))
-                        {
-                            if (!KAO2_LB_removeCurrentInputFrame())
+                            if (KAO2_runReplayingAlgorithm())
                             {
-                                MessageBox(KAO2_mainWindow, "Unexpected index after frame removal.", "", MB_ICONERROR);
+                                KAO2_showStatus("Done and ready.");
+                            }
+                            else
+                            {
+                                /* Semaphore unlock in case of a sudden shutdown */
+                                a = 0;
+                                KAO2_writeMem(KAO2_INPUTS_SEMAPHORE_ADDRESS, &a, 0x01);
+
+                                KAO2_iAmError("Unable to continue execution of the input-recording algorithm!");
                             }
 
-                            g_allowButtons = TRUE;
-                            return 0;
+                            g_currentFrame = NULL;
                         }
 
-                        break;
+                        ENABLE_CTRL_FLAG(ALLOWBTNS)
+                        return 0;
                     }
+
+                    check_more_buttons = FALSE;
+                    break;
                 }
 
+                /* Advance one input-frame */
+                /* (skipping BUTTONS ALLOWED control flag) */
+                case IDM_IFRAME_ADVANCE:
+                {
+                    if (WPARAM_CLICKED)
+                    {
+                        ENABLE_CTRL_FLAG(IFRAMEADV)
+
+                        return 0;
+                    }
+
+                    check_more_buttons = FALSE;
+                    break;
+                }
+
+                /* Switching the TAS mode */
+                case IDM_CHECK_MODE:
+                {
+                    if (CHECK_CTRL_FLAG(ALLOWBTNS) && WPARAM_CLICKED)
+                    {
+                        DISABLE_CTRL_FLAG(ALLOWBTNS)
+
+                        if (LPARAM_CHECKED)
+                        {
+                            a = TRUE;
+                            ENABLE_TAM_FLAG(REC_OR_PLAY)
+                        }
+                        else
+                        {
+                            a = FALSE;
+                            DISABLE_TAM_FLAG(REC_OR_PLAY)
+                        }
+
+                        MACRO_ASSERT_GAME_HANDLE
+                        else if (KAO2_nextInjections())
+                        {
+                            sprintf_s(buf, SMALL_BUF_SIZE, "TAS mode changed to RE%s :)", (a ? "CORDING" : "PLAY"));
+                            KAO2_showStatus(buf);
+                        }
+                        else
+                        {
+                            KAO2_iAmError("Failed to inject TAS-communication code!");
+                        }
+
+                        ENABLE_CTRL_FLAG(ALLOWBTNS)
+                        return 0;
+                    }
+
+                    check_more_buttons = FALSE;
+                    break;
+                }
+
+                /* Switching the step-by-step option */
+                /* (skipping BUTTONS ALLOWED control flag) */
+                case IDM_CHECK_STEP:
+                {
+                    if (WPARAM_CLICKED)
+                    {
+                        if (LPARAM_CHECKED)
+                        {
+                            a = TRUE;
+                            ENABLE_TAM_FLAG(STEP_BY_STEP)
+                        }
+                        else
+                        {
+                            a = FALSE;
+                            DISABLE_TAM_FLAG(STEP_BY_STEP)
+                        }
+
+                        return 0;
+                    }
+
+                    check_more_buttons = FALSE;
+                    break;
+                }
+
+                /* Switching the frame-cloning option */
+                /* (skipping BUTTONS ALLOWED control flag) */
+                case IDM_CHECK_CLONE:
+                {
+                    if (WPARAM_CLICKED)
+                    {
+                        if (LPARAM_CHECKED)
+                        {
+                            ENABLE_TAM_FLAG(CLONE_FRAME)
+                        }
+                        else
+                        {
+                            DISABLE_TAM_FLAG(CLONE_FRAME)
+                        }
+
+                        return 0;
+                    }
+
+                    check_more_buttons = FALSE;
+                    break;
+                }
+
+                /* Switching the framerule option */
+                case IDM_CHECK_FRAMERULE:
+                {
+                    if (CHECK_CTRL_FLAG(ALLOWBTNS) && WPARAM_CLICKED)
+                    {
+                        DISABLE_CTRL_FLAG(ALLOWBTNS)
+
+                        if (LPARAM_CHECKED)
+                        {
+                            ENABLE_TAM_FLAG(FRAMERULE)
+                        }
+                        else
+                        {
+                            DISABLE_TAM_FLAG(FRAMERULE)
+                        }
+
+                        MACRO_FRAMERULE_INJECTION
+
+                        ENABLE_CTRL_FLAG(ALLOWBTNS)
+                        return 0;
+                    }
+
+                    check_more_buttons = FALSE;
+                    break;
+                }
+
+                /* Framerule EditBox */
+                case IDM_EDIT_FRAMERULE:
+                {
+                    if (CHECK_CTRL_FLAG(ALLOWBTNS))
+                    {
+                        DISABLE_CTRL_FLAG(ALLOWBTNS)
+                        a = FALSE;
+
+                        if (EN_SETFOCUS == HIWORD(wParam))
+                        {
+                            a = TRUE;
+                            ENABLE_CTRL_FLAG(FPS_FOCUS);
+                        }
+                        else if (EN_KILLFOCUS == HIWORD(wParam))
+                        {
+                            a = TRUE;
+                            DISABLE_CTRL_FLAG(FPS_FOCUS);
+                        }
+
+                        ENABLE_CTRL_FLAG(ALLOWBTNS)
+                        if (a) { return 0; }
+                    }
+
+                    check_more_buttons = FALSE;
+                    break;
+                }
+
+                /* Reading inputs from a file */
+                case IDM_BUTTON_OPEN_FILE:
+                {
+                    if (CHECK_CTRL_FLAG(ALLOWBTNS) && WPARAM_CLICKED)
+                    {
+                        DISABLE_CTRL_FLAG(ALLOWBTNS)
+
+                        if (KAO2_binfileLoad())
+                        {
+                            g_currentPage = 0;
+                            KAO2_LB_refreshFrameListBox(-1);
+
+                            KAO2_showStatus("New set of frames loaded!");
+                        }
+                        else
+                        {
+                            KAO2_iAmError("An error occurred while loading input frames...");
+                        }
+
+                        ENABLE_CTRL_FLAG(ALLOWBTNS)
+                        return 0;
+                    }
+
+                    check_more_buttons = FALSE;
+                    break;
+                }
+
+                /* Writing inputs to a file */
+                case IDM_BUTTON_SAVE_FILE:
+                {
+                    if (CHECK_CTRL_FLAG(ALLOWBTNS) && WPARAM_CLICKED)
+                    {
+                        DISABLE_CTRL_FLAG(ALLOWBTNS)
+
+                        if (KAO2_binfileSave())
+                        {
+                            KAO2_showStatus("Your frame set is safely stored!");
+                        }
+                        else
+                        {
+                            KAO2_iAmError("An error occurred while saving input frames...");
+                        }
+
+                        ENABLE_CTRL_FLAG(ALLOWBTNS)
+                        return 0;
+                    }
+
+                    check_more_buttons = FALSE;
+                    break;
+                }
+
+                /* Clear all input frames */
+                case IDM_BUTTON_CLEAR_ALL:
+                {
+                    if (CHECK_CTRL_FLAG(ALLOWBTNS) && WPARAM_CLICKED)
+                    {
+                        DISABLE_CTRL_FLAG(ALLOWBTNS)
+
+                        g_currentFrame = NULL;
+                        g_currentFrameId = (-1);
+                        g_currentPage = 0;
+
+                        KAO2_clearAndUpdateFrameGui(NULL);
+
+                        FrameNode_remove(&g_frames);
+                        g_totalFrames = 0;
+
+                        KAO2_LB_refreshFrameListBox(-1);
+                        KAO2_showStatus("All input frames have been deleted...");
+
+                        ENABLE_CTRL_FLAG(ALLOWBTNS)
+                        return 0;
+                    }
+
+                    check_more_buttons = FALSE;
+                    break;
+                }
+
+                /* Switching list-box pages */
+                case IDM_BUTTON_PREV_PAGE:
+                case IDM_BUTTON_NEXT_PAGE:
+                {
+                    if (CHECK_CTRL_FLAG(ALLOWBTNS) && WPARAM_CLICKED)
+                    {
+                        DISABLE_CTRL_FLAG(ALLOWBTNS)
+
+                        g_currentFrame = NULL;
+                        g_currentFrameId = (-1);
+                        /* "currentPage" stays unchanged */
+
+                        KAO2_LB_refreshFrameListBox((LOWORD(wParam) == IDM_BUTTON_PREV_PAGE) ? LEFT : RIGHT);
+
+                        ENABLE_CTRL_FLAG(ALLOWBTNS)
+                        return 0;
+                    }
+
+                    check_more_buttons = FALSE;
+                    break;
+                }
+
+                /* Inserting a new i-frame */
+                case IDM_BUTTON_INSERT_FRAME:
+                {
+                    if (CHECK_CTRL_FLAG(ALLOWBTNS) && WPARAM_CLICKED)
+                    {
+                        DISABLE_CTRL_FLAG(ALLOWBTNS)
+
+                        KAO2_LB_insertNewInputFrame();
+
+                        ENABLE_CTRL_FLAG(ALLOWBTNS)
+                        return 0;
+                    }
+
+                    check_more_buttons = FALSE;
+                    break;
+                }
+
+                /* Removing current i-frame */
+                case IDM_BUTTON_REMOVE_FRAME:
+                {
+                    if (CHECK_CTRL_FLAG(ALLOWBTNS) && WPARAM_CLICKED)
+                    {
+                        DISABLE_CTRL_FLAG(ALLOWBTNS)
+
+                        if (!KAO2_LB_removeCurrentInputFrame())
+                        {
+                            g_lastMessage[0] = '\0';
+                            KAO2_iAmError("Unexpected index after frame removal.");
+                        }
+
+                        ENABLE_CTRL_FLAG(ALLOWBTNS)
+                        return 0;
+                    }
+
+                    check_more_buttons = FALSE;
+                    break;
+                }
+            }
+
+            /* Gamepad Sticks, 4 EditBoxes */
+            /* (skipping BUTTONS ALLOWED control flag) */
+            if (check_more_buttons)
+            {
                 for (a = 0; a < 2; a++)
                 {
                     for (b = 0; b < 2; b++)
@@ -1924,47 +2422,57 @@ LRESULT CALLBACK KAO2_windowProcedure(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM
                         {
                             if (KAO2_stickEditNotify((HWND)lParam, HIWORD(wParam), a, b))
                             {
-                                g_allowButtons = TRUE;
                                 return 0;
                             }
                         }
                     }
                 }
+            }
 
-                if ((HWND)lParam == KAO2_listBoxFrames)
+            /* Listbox of i-frames */
+            if (check_more_buttons && ((HWND)lParam == KAO2_listBoxFrames))
+            {
+                if (CHECK_CTRL_FLAG(ALLOWBTNS) && (LBN_SELCHANGE == HIWORD(wParam)))
                 {
-                    if (LBN_SELCHANGE == HIWORD(wParam))
-                    {
-                        g_currentFrame = NULL;
-                        g_currentFrameId = (-1);
-                        /* "currentPage" koniecznie zostaje */
+                    DISABLE_CTRL_FLAG(ALLOWBTNS)
 
-                        KAO2_LB_selectInputFrameOrUpdateGui
-                        (
-                            SendMessage((HWND)lParam, LB_GETCURSEL, (WPARAM)NULL, (LPARAM)NULL),
-                            FALSE
-                        );
+                    g_currentFrame = NULL;
+                    g_currentFrameId = (-1);
+                    /* "currentPage" must stay unchanged */
 
-                        g_allowButtons = TRUE;
-                        return 0;
-                    }
+                    KAO2_LB_selectInputFrameOrUpdateGui
+                    (
+                        SendMessage((HWND)lParam, LB_GETCURSEL, (WPARAM)NULL, (LPARAM)NULL),
+                        FALSE
+                    );
+
+                    ENABLE_CTRL_FLAG(ALLOWBTNS)
+                    return 0;
                 }
 
-                if ((LOWORD(wParam) >= BUTTON_FRAME_PARAM) && (BN_CLICKED == HIWORD(wParam)))
+                check_more_buttons = FALSE;
+            }
+
+            /* Current i-frame parameters, CheckBoxes */
+            if (check_more_buttons && (LOWORD(wParam) >= IDM_BUTTON_FRAME_PARAM))
+            {
+                if (WPARAM_CLICKED && (NULL != g_currentFrame))
                 {
-                    if (NULL != g_currentFrame)
+                    a = (0x01 << (LOWORD(wParam) - IDM_BUTTON_FRAME_PARAM));
+
+                    if (LPARAM_CHECKED)
                     {
-                        a = (0x01 << (LOWORD(wParam) - BUTTON_FRAME_PARAM));
+                        (g_currentFrame->buttons) |= a;
+                    }
+                    else
+                    {
+                        (g_currentFrame->buttons) &= (~a);
+                    }
 
-                        if (BST_CHECKED == SendMessage((HWND)lParam, BM_GETCHECK, (WPARAM)NULL, (LPARAM)NULL))
-                        {
-                            g_currentFrame->buttons |= a;
-                        }
-                        else
-                        {
-                            g_currentFrame->buttons &= (~a);
-                        }
-
+                    /* listBox update blocked by BUTTONS ALLOWED flag */
+                    /* (disabled while in REC or PLAY modes) */
+                    if (CHECK_CTRL_FLAG(ALLOWBTNS))
+                    {
                         KAO2_LB_selectInputFrameOrUpdateGui
                         (
                             KAO2_LB_getIndexAndAdjustPage(),
@@ -1972,11 +2480,10 @@ LRESULT CALLBACK KAO2_windowProcedure(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM
                         );
                     }
 
-                    g_allowButtons = TRUE;
                     return 0;
                 }
 
-                g_allowButtons = TRUE;
+                check_more_buttons = FALSE;
             }
 
             break;
@@ -2001,21 +2508,22 @@ BOOL KAO2_createWindows(HINSTANCE hInstance)
         (LONG_PTR) KAO2_winProcRightStick
     };
 
-    const int KAO2TAS_WINDOW_WIDTH = 640;
-    const int KAO2TAS_WINDOW_HEIGHT = 640;
+    const int KAO2TAS_WINDOW_WIDTH  = 640;
+    const int KAO2TAS_WINDOW_HEIGHT = 680;
     const int PADDING = 8;
 
-    const int UPPER_BUTTONS_PER_ROW = 4;
+    const int UPPER_BUTTONS_PER_ROW = 3;
 
     const int BUTTON_WIDTH = (KAO2TAS_WINDOW_WIDTH -
         (1 + UPPER_BUTTONS_PER_ROW) * PADDING) / UPPER_BUTTONS_PER_ROW;
+    const int LABEL_HEIGHT = (16 + 4);
     const int BUTTON_HEIGHT = 24;
 
-    const int LISTA_HEIGHT = 128;
-    const int GALKA_WIDTH = 128;
-    const int OPTION_WIDTH = 144;
+    const int LISTBOX_HEIGHT    =  96;
+    const int BLACKSQUARE_WIDTH = 128;
+    const int OPTION_WIDTH      = 144;
 
-    LONG i, j, x = PADDING, y = PADDING;
+    LONG i, j, x = PADDING, y = PADDING, x2, y2;
 
     RECT real_window_rect;
 
@@ -2088,37 +2596,41 @@ BOOL KAO2_createWindows(HINSTANCE hInstance)
 
     /* Status label */
 
+    y2 = (2 * LABEL_HEIGHT);
+
     KAO2_statusLabel = CreateWindowEx
     (
         WS_EX_CLIENTEDGE, "STATIC", "",
         WS_VISIBLE | WS_CHILD,
         x, y,
-        KAO2TAS_WINDOW_WIDTH - 2 * PADDING, BUTTON_HEIGHT,
+        KAO2TAS_WINDOW_WIDTH - 2 * PADDING, y2,
         KAO2_mainWindow, NULL, hInstance, NULL
     );
 
     CHECK_WINDOW_AND_SET_FONT(KAO2_statusLabel, KAO2_font01);
 
-    y += (BUTTON_HEIGHT + PADDING);
+    y += (y2 + PADDING);
 
     /* Upper Buttons */
+
+    y2 = y;
 
     i = 0;
     while (i < UPPER_BUTTONS_COUNT)
     {
         test_window = CreateWindow
         (
-            "BUTTON", BUTTON_NAMES[i],
+            "BUTTON", UPPER_BUTTON_NAMES[i],
             WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON,
             x, y, BUTTON_WIDTH, BUTTON_HEIGHT,
-            KAO2_mainWindow, (HMENU)(BUTTON_ATTACH + i), hInstance, NULL
+            KAO2_mainWindow, (HMENU)(IDM_BUTTON_ATTACH + i), hInstance, NULL
         );
 
         CHECK_WINDOW_AND_SET_FONT(test_window, KAO2_font01);
 
         i++;
 
-        if (0 == (i % (UPPER_BUTTONS_COUNT / 2)))
+        if (0 == (i % UPPER_BUTTONS_PER_ROW))
         {
             x = PADDING;
             y += (BUTTON_HEIGHT + PADDING);
@@ -2129,74 +2641,134 @@ BOOL KAO2_createWindows(HINSTANCE hInstance)
         }
     }
 
+    x = PADDING;
+    y = y2 + 2 * (BUTTON_HEIGHT + PADDING);
+    y2 = y;
+
+    /* Upper Checkboxes */
+
+    x2 = (KAO2TAS_WINDOW_WIDTH - 2 * PADDING);
+
+    for (i = 0; i < UPPER_CHECKBOX_COUNT; i++)
+    {
+        test_window = CreateWindow
+        (
+            "BUTTON", UPPER_CHECKBOX_NAMES[i],
+            WS_VISIBLE | WS_CHILD | BS_AUTOCHECKBOX,
+            x, y, x2, LABEL_HEIGHT,
+            KAO2_mainWindow, (HMENU)(IDM_CHECK_MODE + i), hInstance, NULL
+        );
+
+        CHECK_WINDOW_AND_SET_FONT(test_window, KAO2_font01);
+
+        y += LABEL_HEIGHT;
+    }
+
+    /* EditBox and FrameRate status */
+
+    x2 = ((KAO2TAS_WINDOW_WIDTH - 3 * PADDING) / 5);
+
+    KAO2_frameRuleEditBox = CreateWindowEx
+    (
+        WS_EX_CLIENTEDGE, "EDIT", "",
+        WS_VISIBLE | WS_CHILD | ES_LEFT,
+        x, y, x2, BUTTON_HEIGHT,
+        KAO2_mainWindow, (HMENU) IDM_EDIT_FRAMERULE, hInstance, NULL
+    );
+
+    CHECK_WINDOW_AND_SET_FONT(KAO2_frameRuleEditBox, KAO2_font01);
+
+    KAO2_editFrameruleProcedure = (WNDPROC) SetWindowLongPtrA(KAO2_frameRuleEditBox, GWLP_WNDPROC, (LONG_PTR) KAO2_winProcEditFramerule);
+
+    if (NULL == KAO2_editFrameruleProcedure)
+    {
+        return FALSE;
+    }
+
+    x += (x2 + PADDING);
+    y2 = (3 * LABEL_HEIGHT);
+
+    KAO2_frameRuleStatus = CreateWindowEx
+    (
+        WS_EX_CLIENTEDGE, "STATIC", "",
+        WS_VISIBLE | WS_CHILD,
+        x, y, 4 * x2, y2,
+        KAO2_mainWindow, NULL, hInstance, NULL
+    );
+
+    CHECK_WINDOW_AND_SET_FONT(KAO2_frameRuleStatus, KAO2_font01);
+
+    x = PADDING;
+    y += (y2 + PADDING);
+
     /* ListBox with input-frames */
 
     KAO2_listBoxFrames = CreateWindowEx
     (
         WS_EX_CLIENTEDGE, "LISTBOX", "",
         WS_VISIBLE | WS_CHILD | WS_VSCROLL | LBS_HASSTRINGS | LBS_NOTIFY,
-        x, y, (KAO2TAS_WINDOW_WIDTH - 2 * PADDING), LISTA_HEIGHT,
+        x, y, (KAO2TAS_WINDOW_WIDTH - 2 * PADDING), LISTBOX_HEIGHT,
         KAO2_mainWindow, NULL, hInstance, NULL
     );
 
     CHECK_WINDOW_AND_SET_FONT(KAO2_listBoxFrames, KAO2_font02);
 
-    y += (LISTA_HEIGHT + PADDING);
+    y += LISTBOX_HEIGHT;
 
-    /* Przyciski przełączania stron */
+    /* Buttons for page switching */
 
     for (i = 0; i < 2; i++)
     {
         test_window = CreateWindow
         (
-            "BUTTON", BUTTON_NAMES[UPPER_BUTTONS_COUNT + i],
+            "BUTTON", OTHER_BUTTON_NAMES[i],
             WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON,
-            x, y, BUTTON_HEIGHT, BUTTON_HEIGHT,
-            KAO2_mainWindow, (HMENU)(BUTTON_PREV_PAGE + i), hInstance, NULL
+            x, y, BUTTON_HEIGHT, LABEL_HEIGHT,
+            KAO2_mainWindow, (HMENU)(IDM_BUTTON_PREV_PAGE + i), hInstance, NULL
         );
 
-        CHECK_WINDOW_AND_SET_FONT(test_window, KAO2_font02);
+        CHECK_WINDOW_AND_SET_FONT(test_window, KAO2_font01);
 
         x += (BUTTON_HEIGHT + PADDING);
     }
 
     /* Label under the list box */
 
-    i = (KAO2TAS_WINDOW_WIDTH - 6 * PADDING - 4 * BUTTON_HEIGHT);
+    x2 = (KAO2TAS_WINDOW_WIDTH - 6 * PADDING - 4 * BUTTON_HEIGHT);
 
     KAO2_listBoxStatus = CreateWindowEx
     (
         WS_EX_CLIENTEDGE, "STATIC", "Press [+] to insert new Input Frame, [-] to remove Current Frame.",
         WS_VISIBLE | WS_CHILD,
-        x, y, i, BUTTON_HEIGHT,
+        x, y, x2, LABEL_HEIGHT,
         KAO2_mainWindow, NULL, hInstance, NULL
     );
 
     CHECK_WINDOW_AND_SET_FONT(KAO2_listBoxStatus, KAO2_font01);
 
-    x += (i + PADDING);
+    x += (x2 + PADDING);
 
-    /* Przyciski dodawania i usuwania pojedynczych input-frames */
+    /* Buttons for adding and removing a single input-frame */
 
     for (i = 0; i < 2; i++)
     {
         test_window = CreateWindow
         (
-            "BUTTON", BUTTON_NAMES[UPPER_BUTTONS_COUNT + 2 + i],
+            "BUTTON", OTHER_BUTTON_NAMES[2 + i],
             WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON,
-            x, y, BUTTON_HEIGHT, BUTTON_HEIGHT,
-            KAO2_mainWindow, (HMENU)(BUTTON_INSERT_FRAME + i), hInstance, NULL
+            x, y, BUTTON_HEIGHT, LABEL_HEIGHT,
+            KAO2_mainWindow, (HMENU)(IDM_BUTTON_INSERT_FRAME + i), hInstance, NULL
         );
 
-        CHECK_WINDOW_AND_SET_FONT(test_window, KAO2_font02);
+        CHECK_WINDOW_AND_SET_FONT(test_window, KAO2_font01);
 
         x += (BUTTON_HEIGHT + PADDING);
     }
 
     x = PADDING;
-    y += (BUTTON_HEIGHT + 3 * PADDING);
+    y += (LABEL_HEIGHT + 2 * PADDING);
 
-    /* Gałki */
+    /* Gamepad Sticks - static controls */
 
     for (i = 0; i < 2; i++)
     {
@@ -2204,7 +2776,7 @@ BOOL KAO2_createWindows(HINSTANCE hInstance)
         (
             WS_EX_CLIENTEDGE, "STATIC", "",
             WS_VISIBLE | WS_CHILD,
-            x, y, GALKA_WIDTH, GALKA_WIDTH,
+            x, y, BLACKSQUARE_WIDTH, BLACKSQUARE_WIDTH,
             KAO2_mainWindow, NULL, hInstance, NULL
         );
 
@@ -2220,13 +2792,13 @@ BOOL KAO2_createWindows(HINSTANCE hInstance)
             return FALSE;
         }
 
-        x += (GALKA_WIDTH + PADDING);
+        x += (BLACKSQUARE_WIDTH + PADDING);
 
         test_window = CreateWindow
         (
-            "STATIC", BUTTON_NAMES[UPPER_BUTTONS_COUNT + 4 + i],
+            "STATIC", OTHER_BUTTON_NAMES[4 + i],
             WS_VISIBLE | WS_CHILD,
-            x, y, GALKA_WIDTH, BUTTON_HEIGHT,
+            x, y, BLACKSQUARE_WIDTH, BUTTON_HEIGHT,
             KAO2_mainWindow, NULL, hInstance, NULL
         );
 
@@ -2240,7 +2812,7 @@ BOOL KAO2_createWindows(HINSTANCE hInstance)
             (
                 WS_EX_CLIENTEDGE, "EDIT", "",
                 WS_VISIBLE | WS_CHILD | ES_LEFT,
-                x, y, GALKA_WIDTH, BUTTON_HEIGHT,
+                x, y, BLACKSQUARE_WIDTH, BUTTON_HEIGHT,
                 KAO2_mainWindow, NULL, hInstance, NULL
             );
 
@@ -2250,13 +2822,13 @@ BOOL KAO2_createWindows(HINSTANCE hInstance)
         }
 
         x = PADDING;
-        y = y - 3 * (BUTTON_HEIGHT + PADDING) + (GALKA_WIDTH + PADDING);
+        y = y - 3 * (BUTTON_HEIGHT + PADDING) + (BLACKSQUARE_WIDTH + PADDING);
     }
 
-    x = (PADDING + GALKA_WIDTH + PADDING + GALKA_WIDTH + 6 * PADDING);
-    y = y - 2 * (GALKA_WIDTH + PADDING) + 2 * PADDING;
+    x = (PADDING + BLACKSQUARE_WIDTH + PADDING + BLACKSQUARE_WIDTH + 6 * PADDING);
+    y = y - 2 * (BLACKSQUARE_WIDTH + PADDING) + 2 * PADDING;
 
-    /* Wizualne wgniecenie dla chechboxów */
+    /* Visual dent for checkboxes area */
 
     test_window = CreateWindow
     (
@@ -2264,7 +2836,7 @@ BOOL KAO2_createWindows(HINSTANCE hInstance)
         WS_VISIBLE | WS_CHILD | BS_GROUPBOX,
         x - 2 * PADDING, y - 2 * PADDING,
         2 * (OPTION_WIDTH + PADDING) + 2 * PADDING,
-        8 * (BUTTON_HEIGHT + PADDING) + 2 * PADDING,
+        8 * (LABEL_HEIGHT + PADDING) + 2 * PADDING,
         KAO2_mainWindow, NULL, hInstance, NULL
     );
 
@@ -2273,7 +2845,7 @@ BOOL KAO2_createWindows(HINSTANCE hInstance)
         return FALSE;
     }
 
-    /* CheckBoxy od atrybutów danej i-klatki */
+    /* CheckBoxes represengint the i-frame attributes */
 
     i = 0;
 
@@ -2283,8 +2855,8 @@ BOOL KAO2_createWindows(HINSTANCE hInstance)
         (
             "BUTTON", FRAME_PARAM_NAMES[i],
             WS_VISIBLE | WS_CHILD | BS_AUTOCHECKBOX,
-            x, y, OPTION_WIDTH, BUTTON_HEIGHT,
-            KAO2_mainWindow, (HMENU)(BUTTON_FRAME_PARAM + i), hInstance, NULL
+            x, y, OPTION_WIDTH, LABEL_HEIGHT,
+            KAO2_mainWindow, (HMENU)(IDM_BUTTON_FRAME_PARAM + i), hInstance, NULL
         );
 
         CHECK_WINDOW_AND_SET_FONT(KAO2_checkBoxParams[i], KAO2_font01);
@@ -2294,19 +2866,20 @@ BOOL KAO2_createWindows(HINSTANCE hInstance)
         if (0 == (i % 8))
         {
             x += (OPTION_WIDTH + PADDING);
-            y -= 7 * (BUTTON_HEIGHT + PADDING);
+            y -= 7 * (LABEL_HEIGHT + PADDING);
         }
         else
         {
-            y += (BUTTON_HEIGHT + PADDING);
+            y += (LABEL_HEIGHT + PADDING);
         }
     }
 
-    /* Done! */
+    /* Quick setup with default options */
 
+    KAO2_frameruleInjectionPrepare(FALSE, 0);
     KAO2_showStatus("Start by launching \"Kao the Kangaroo: Round 2\".");
-    ShowWindow(KAO2_mainWindow, SW_SHOW);
 
+    ShowWindow(KAO2_mainWindow, SW_SHOW);
     return TRUE;
 }
 
@@ -2316,14 +2889,22 @@ BOOL KAO2_createWindows(HINSTANCE hInstance)
 
 int CALLBACK WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _In_ LPSTR lpCmdLine, _In_ int nCmdShow)
 {
-    int i;
+    DWORD i;
 
     /* Reseting global stuff */
 
-    g_allowButtons = TRUE;
+    g_quit = FALSE;
 
-    KAO2_mainWindow    = NULL;
-    KAO2_statusLabel   = NULL;
+    g_toolAssistedMode   = 0;
+    g_controlFlags       = CTRL_FLAG_ALLOWBTNS;
+    g_updateFramePortion = 1.0f;
+
+    KAO2_mainWindow  = NULL;
+    KAO2_statusLabel = NULL;
+
+    KAO2_frameRuleEditBox = NULL;
+    KAO2_frameRuleStatus  = NULL;
+
     KAO2_listBoxFrames = NULL;
     KAO2_listBoxStatus = NULL;
 
@@ -2332,6 +2913,8 @@ int CALLBACK WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance,
         KAO2_staticBoxSticks[i] = NULL;
         KAO2_staticSticksProcedures[i] = NULL;
     }
+
+    KAO2_editFrameruleProcedure = NULL;
 
     for (i = 0; i < 4; i++)
     {
@@ -2352,29 +2935,33 @@ int CALLBACK WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance,
 
     g_frames         = NULL;
     g_currentFrame   = NULL;
-    g_paintedFrame   = NULL;
 
     g_currentPage    = 0;
     g_currentFrameId = (-1);
     g_totalFrames    = 0;
 
-    g_TAS_mode = TM_REPLAY;
-
-    /* Starting the tool */
+    /* Starting the program */
 
     if (!KAO2_createWindows(hInstance))
     {
-        MessageBox(NULL, "Could not create the application window!", "", MB_ICONERROR);
+        MessageBox(NULL, "Could not create the application window!", MSGBOX_ERROR_CAPTION, MB_ICONERROR);
     }
     else
     {
         while (KAO2_windowLoop())
         {
-            /* Do nothing... */
+            if ((INVALID_HANDLE_VALUE != KAO2_gameHandle) && GetExitCodeProcess(KAO2_gameHandle, &i))
+            {
+                if (STILL_ACTIVE != i)
+                {
+                    KAO2_gameHandle = INVALID_HANDLE_VALUE;
+                    KAO2_showStatus("Game has been closed! Please re-launch \"Kao the Kangaroo: Round 2\".");
+                }
+            }
         }
     }
 
-    /* Ending the tool */
+    /* Ending the program */
 
     if (NULL != KAO2_font01)
     {
