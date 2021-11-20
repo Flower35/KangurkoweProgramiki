@@ -998,7 +998,7 @@
         if (!Gamelet_0384)
         {
             FLOAT elapsed_frames = Gamelet_0010 * delta * LOGIC_FPS + Gamelet_0364;
-            DWORD update_steps   = ftoul(UPDATE_FREQ * elapsed_frame);
+            DWORD update_steps   = ftoul(UPDATE_FREQ * elapsed_frames);
             Gamelet_0364         = fmod(elapsed_frames, UPDATE_PORTION);
 
             while (0 != update_steps)

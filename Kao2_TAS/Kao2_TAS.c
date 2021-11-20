@@ -25,11 +25,16 @@
 // (2021-11-18)
 //  * Ulepszone komunikaty o statusie i o synchronizacji FPS,
 //   możliwość wprowadzania inputów klatka-po-klatce.
+// (2021-11-19)
+//  * Kolejne ciekawe definicje i makra dopisane, automatyczny
+//   focus na okno gry w trybie nagrywania ręcznych inputów.
 ////////////////////////////////////////////////////////////////
 
 ////////////////////////////////////////////////////////////////
 // Libraries
 ////////////////////////////////////////////////////////////////
+
+#define NULL  0  // not C++'s `((void *)0)`, just zero :)
 
 #define _USE_MATH_DEFINES
 #include <math.h>
@@ -40,23 +45,23 @@
 #include <Windows.h>
 #include <psapi.h>
 
-#pragma comment (lib, "USER32.LIB")
-#pragma comment (lib, "GDI32.LIB")
-#pragma comment (lib, "COMDLG32.LIB")
-#pragma comment(linker, "/subsystem:windows")
+#pragma comment (lib,        "USER32.LIB")
+#pragma comment (lib,         "GDI32.LIB")
+#pragma comment (lib,      "COMDLG32.LIB")
+#pragma comment (linker, "/subsystem:windows")
 
 ////////////////////////////////////////////////////////////////
 // Const Defines for GUI
 ////////////////////////////////////////////////////////////////
 
 #define KAO2TAS_WINDOW_CLASSNAME  "KAO2_TAS_WINDOW_CLASS"
-#define KAO2TAS_WINDOW_NAME       "Kao2 Tool-Assisted Speedruns - Input Tester"
-#define MSGBOX_ERROR_CAPTION      "An epic fail has occurred! :)"
+#define KAO2TAS_WINDOW_NAME       "KAO2 :: Tool-Assisted Speedruns :: Input Tester"
+
+#define MSGBOX_ERROR_CAPTION  "An epic fail has occurred! :)"
 
 enum DIRECTION
 {
-    LEFT,
-    RIGHT
+    LEFT, RIGHT
 };
 
 #define UPPER_BUTTONS_COUNT   6
@@ -114,9 +119,10 @@ const char * FRAME_PARAM_NAMES[1 << 4] =
 // Other defines (buffers, i-frames, binary headers)
 ////////////////////////////////////////////////////////////////
 
-#define BUF_SIZE       256
-#define SMALL_BUF_SIZE  64
-#define TINY_BUF_SIZE   32
+#define BUF_SIZE         256
+#define MEDIUM_BUF_SIZE   64
+#define SMALL_BUF_SIZE    32
+#define LASTMSG_SIZE    (BUF_SIZE / 2)
 
 #define ENUMERATED_PROCESSES  512
 
@@ -154,7 +160,12 @@ struct FrameNode
 #define KAO2_MAX_FPS  10000
 
 #define KAO2_WINDOW_CLASSNAME  "GLUT"
-#define KAO2_WINDOW_NAME  "kangurek Kao: 2ga runda"
+#define KAO2_WINDOW_NAME       "kangurek Kao: 2ga runda"
+
+const char * KAO2_EXECUTABLE_NAMES[2] =
+{
+    "kao2.exe", "kao2_mod.exe"
+};
 
 #define FRAMES_PER_PAGE  (10 * KAO2_ANIM_FPS)
 
@@ -166,7 +177,7 @@ struct FrameNode
 
 BOOL g_quit;
 
-char g_lastMessage[BUF_SIZE / 2];
+char g_lastMessage[LASTMSG_SIZE];
 
 BYTE g_toolAssistedMode;
 BYTE g_controlFlags;
@@ -193,11 +204,26 @@ FrameNode_t * g_currentFrame;
 int g_currentPage;
 int g_currentFrameId;
 int g_totalFrames;
+
+HWND KAO2_gameWindow;
 HANDLE KAO2_gameHandle;
 
 ////////////////////////////////////////////////////////////////
 // Cool macros
 ////////////////////////////////////////////////////////////////
+
+#define EQ(__a, __b)  ((__a) == (__b))
+#define NE(__a, __b)  ((__a) != (__b))
+
+#define IS_NULL(__a)      EQ(                NULL, (__a))
+#define NOT_NULL(__a)     NE(                NULL, (__a))
+#define IS_ONE(__a)       EQ(                   1, (__a))
+#define IS_INVALID(__a)   EQ(INVALID_HANDLE_VALUE, (__a))
+#define NOT_INVALID(__a)  NE(INVALID_HANDLE_VALUE, (__a))
+
+#define IS_EITHER(__a, __b, __c)  (EQ(__a, __b) || EQ(__a, __c))
+
+#define FAIL_IF_NULL(__a)  if IS_NULL(__a) { return FALSE; }
 
 #define MACRO_CLAMPF(__x, __min, __max) \
     (__x > __max) ? __max : \
@@ -215,12 +241,11 @@ HANDLE KAO2_gameHandle;
     TAS_MACRO_WINDOWLOOP
 
 #define CHECK_WINDOW_AND_SET_FONT(__hwnd, __font) \
-    if (NULL == __hwnd) { return FALSE; } \
-    SendMessage(__hwnd, WM_SETFONT, \
-    (WPARAM)__font, (LPARAM) 0);
+    FAIL_IF_NULL(__hwnd) \
+    SendMessage(__hwnd, WM_SETFONT, (WPARAM)__font, (LPARAM) 0);
 
 #define MACRO_ASSERT_GAME_HANDLE \
-    if (INVALID_HANDLE_VALUE == KAO2_gameHandle) { \
+    if IS_INVALID(KAO2_gameHandle) { \
         KAO2_showStatus("Please attach <Kao2> first!"); \
     }
 
@@ -229,8 +254,8 @@ HANDLE KAO2_gameHandle;
     else { \
         a = KAO2_frameruleInjection(); \
         if (a) { \
-            if (1 == a) { sprintf_s(buf, SMALL_BUF_SIZE, "Enabled frame synchronization (%.2f FPS limit).", (KAO2_ANIM_FPS / g_updateFramePortion)); \
-            } else { sprintf_s(buf, SMALL_BUF_SIZE, "Disabled frame synchronization."); } \
+            if IS_ONE(a) { sprintf_s(buf, MEDIUM_BUF_SIZE, "Enabled frame synchronization (%.2f FPS limit).", (KAO2_ANIM_FPS / g_updateFramePortion)); \
+            } else { sprintf_s(buf, MEDIUM_BUF_SIZE, "Disabled frame synchronization."); } \
             KAO2_showStatus(buf); \
         } else { \
             KAO2_iAmError("Failed to inject frame-rule code!"); \
@@ -238,27 +263,28 @@ HANDLE KAO2_gameHandle;
     }
 
 #define TAS_MACRO_INJECT_CODE(__array, __at) \
-    if (!KAO2_writeMem(__at, __array, sizeof(__array))) { return FALSE; }
+    FAIL_IF_NULL(KAO2_writeMem(__at, __array, sizeof(__array)))
 
 #define TAS_MACRO_INJECT_STR(__str, __at) \
-    if (!KAO2_writeMem(__at, __str, 0x01 + strlen(__str))) { return FALSE; }
+    FAIL_IF_NULL(KAO2_writeMem(__at, __str, 0x01 + strlen(__str)))
 
 #define TAS_MACRO_STORE_DWORD(__dword, __at) \
-    if (!KAO2_writeMem(__at, &__dword, 0x04)) { return FALSE; }
+    FAIL_IF_NULL(KAO2_writeMem(__at, &__dword, 0x04))
 
 #define TAS_MACRO_STORE_FLAG(__value, __at) \
     flag = __value; \
-    if (!KAO2_writeMem(__at, &flag, 0x01)) { return FALSE; }
+    FAIL_IF_NULL(KAO2_writeMem(__at, &flag, 0x01))
 
 #define TAS_MACRO_WAIT_FLAG_EQ(__value, __at) \
-    do { if (!KAO2_readMem(__at, &flag, 0x01)) { return FALSE; } \
-    } while (__value == flag);
+    do { \
+        FAIL_IF_NULL(KAO2_readMem(__at, &flag, 0x01)) \
+    } while EQ(__value, flag);
 
 #define TAS_MACRO_WAIT_FLAG_NE_WINLOOP(__value, __at) \
     do { \
-        if (!KAO2_readMem(__at, &flag, 0x01)) { return FALSE; } \
+        FAIL_IF_NULL(KAO2_readMem(__at, &flag, 0x01)) \
         TAS_MACRO_WINDOWLOOP \
-    } while (__value != flag);
+    } while NE(__value, flag);
 
 #define ENABLE_TAM_FLAG(__flag) \
     g_toolAssistedMode |= (BYTE) TA_MODE_##__flag;
@@ -279,10 +305,10 @@ HANDLE KAO2_gameHandle;
     (CTRL_FLAG_##__flag & g_controlFlags)
 
 #define WPARAM_CLICKED \
-    (BN_CLICKED == HIWORD(wParam))
+    EQ(BN_CLICKED, HIWORD(wParam))
 
 #define LPARAM_CHECKED \
-    (BST_CHECKED == SendMessage((HWND)lParam, BM_GETCHECK, (WPARAM)NULL, (LPARAM)NULL))
+    EQ(BST_CHECKED, SendMessage((HWND)lParam, BM_GETCHECK, (WPARAM)NULL, (LPARAM)NULL))
 
 #define TAS_MACRO_RECORDING_MSG(details) \
     sprintf_s(buf, BUF_SIZE, "Recording inputs... [%05i] %s", a, details); \
@@ -372,7 +398,7 @@ enum KAO2_KEY_DEFINES
 
 VOID FrameNode_reset(FrameNode_t * node)
 {
-    if (NULL != node)
+    if NOT_NULL(node)
     {
         node->sticks[0][0] = 0;
         node->sticks[0][1] = 0;
@@ -397,10 +423,7 @@ BOOL FrameNode_writeToGame(FrameNode_t * node)
     {
         for (b = 0; b < 2; b++)
         {
-            if (!KAO2_writeMem(address, &(node->sticks[a][b]), 0x04))
-            {
-                return FALSE;
-            }
+            FAIL_IF_NULL(KAO2_writeMem(address, &(node->sticks[a][b]), 0x04))
 
             address += 0x04;
         }
@@ -414,10 +437,7 @@ BOOL FrameNode_writeToGame(FrameNode_t * node)
     {
         if (b & (node->buttons))
         {
-            if (!KAO2_writeMem(address, &flag, 0x01))
-            {
-                return FALSE;
-            }
+            FAIL_IF_NULL(KAO2_writeMem(address, &flag, 0x01))
         }
 
         b = (b << 1);
@@ -440,10 +460,7 @@ BOOL FrameNode_readFromGame(FrameNode_t * node)
     {
         for (b = 0; b < 2; b++)
         {
-            if (!KAO2_readMem(address, &(node->sticks[a][b]), 0x04))
-            {
-                return FALSE;
-            }
+            FAIL_IF_NULL(KAO2_readMem(address, &(node->sticks[a][b]), 0x04))
 
             address += 0x04;
         }
@@ -455,10 +472,7 @@ BOOL FrameNode_readFromGame(FrameNode_t * node)
 
     for (a = 0; a < ((1 << 4) - 1); a++)
     {
-        if (!KAO2_readMem(address, &flag, 0x01))
-        {
-            return FALSE;
-        }
+        FAIL_IF_NULL(KAO2_readMem(address, &flag, 0x01))
 
         if (flag)
         {
@@ -479,11 +493,7 @@ BOOL FrameNode_readFromGame(FrameNode_t * node)
 FrameNode_t * FrameNode_create(float l_x, float l_y, float r_x, float r_y, WORD buttons, FrameNode_t * parent)
 {
     FrameNode_t * node = (FrameNode_t *) malloc(sizeof(FrameNode_t));
-
-    if (NULL == node)
-    {
-        return NULL;
-    }
+    FAIL_IF_NULL(node);
 
     node->sticks[0][0] = l_x;
     node->sticks[0][1] = l_y;
@@ -492,7 +502,7 @@ FrameNode_t * FrameNode_create(float l_x, float l_y, float r_x, float r_y, WORD 
 
     node->buttons = buttons;
 
-    if (NULL != parent)
+    if NOT_NULL(parent)
     {
         (node->next) = (parent->next);
         (parent->next) = node;
@@ -522,7 +532,7 @@ FrameNode_t * FrameNode_createEmpty(FrameNode_t * parent)
 
 FrameNode_t * FrameNode_createFromCopy(FrameNode_t * node, FrameNode_t * parent)
 {
-    if (NULL != node)
+    if NOT_NULL(node)
     {
         return FrameNode_create
         (
@@ -546,7 +556,7 @@ VOID FrameNode_remove(FrameNode_t ** head_ref)
 
     * head_ref = NULL;
 
-    while (NULL != current)
+    while NOT_NULL(current)
     {
         next = current->next;
         free(current);
@@ -565,7 +575,7 @@ FrameNode_t * FrameNode_getIth(FrameNode_t * head, int id)
         return NULL;
     }
 
-    while ((NULL != head) && (id > 0))
+    while (NOT_NULL(head) && (id > 0))
     {
         head = head->next;
         id--;
@@ -592,10 +602,10 @@ BOOL filenameDatExt(const char * name)
         return TRUE;
     }
 
-    if (('.' == name[i - 4]) &&
-        (('d' == name[i - 3]) || ('D' == name[i - 3])) &&
-        (('a' == name[i - 2]) || ('A' == name[i - 2])) &&
-        (('t' == name[i - 1]) || ('T' == name[i - 1])))
+    if ( EQ('.', name[i - 4]) &&
+        IS_EITHER(name[i - 3], 'd', 'D') &&
+        IS_EITHER(name[i - 2], 'a', 'A') &&
+        IS_EITHER(name[i - 1], 't', 'T') )
     {
         return TRUE;
     }
@@ -611,7 +621,7 @@ BOOL KAO2_writeFile(HANDLE file, LPCVOID what, size_t length)
 {
     if (!WriteFile(file, what, length, NULL, NULL))
     {
-        sprintf_s(g_lastMessage, (BUF_SIZE / 2), "Could not write %d bytes to the opened file!", length);
+        sprintf_s(g_lastMessage, LASTMSG_SIZE, "Could not write %d bytes to the opened file!", length);
     }
 
     return TRUE;
@@ -625,7 +635,7 @@ BOOL KAO2_readFile(HANDLE file, LPVOID what, size_t length)
 {
     if (!ReadFile(file, what, length, NULL, NULL))
     {
-        sprintf_s(g_lastMessage, (BUF_SIZE / 2), "Could not read %d bytes from the opened file!", length);
+        sprintf_s(g_lastMessage, LASTMSG_SIZE, "Could not read %d bytes from the opened file!", length);
     }
 
     return TRUE;
@@ -655,7 +665,7 @@ BOOL KAO2_binfileSave()
 
     buf[0] = '\0';
 
-    if (FALSE != GetSaveFileName(&ofn))
+    if NOT_NULL(GetSaveFileName(&ofn))
     {
         if (!filenameDatExt(buf))
         {
@@ -669,32 +679,32 @@ BOOL KAO2_binfileSave()
 
         file = CreateFile(buf, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, 0, NULL);
 
-        if (INVALID_HANDLE_VALUE == file)
+        if IS_INVALID(file)
         {
-            sprintf_s(g_lastMessage, (BUF_SIZE / 2), "Could not create that file.");
+            sprintf_s(g_lastMessage, LASTMSG_SIZE, "Could not create that file.");
             return FALSE;
         }
 
-        if (!KAO2_writeFile(file, (LPCVOID) TAS_BINFILE_HEADER, 0x08)) { return FALSE; }
+        FAIL_IF_NULL(KAO2_writeFile(file, (LPCVOID) TAS_BINFILE_HEADER, 0x08))
 
-        if (!KAO2_writeFile(file, (LPCVOID) &g_totalFrames, 0x04)) { return FALSE; }
+        FAIL_IF_NULL(KAO2_writeFile(file, (LPCVOID) &g_totalFrames, 0x04))
 
         frame = g_frames;
 
         for (i = 0; i < g_totalFrames; i++)
         {
-            if (NULL == frame)
+            if IS_NULL(frame)
             {
-                sprintf_s(g_lastMessage, (BUF_SIZE / 2), "NULL i-frame found. This should not happen...");
+                sprintf_s(g_lastMessage, LASTMSG_SIZE, "NULL i-frame found. This should not happen...");
                 CloseHandle(file);
                 return FALSE;
             }
 
-            if (!KAO2_writeFile(file, (LPCVOID) &(frame->sticks[0][0]), 0x04)) { return FALSE; }
-            if (!KAO2_writeFile(file, (LPCVOID) &(frame->sticks[0][1]), 0x04)) { return FALSE; }
-            if (!KAO2_writeFile(file, (LPCVOID) &(frame->sticks[1][0]), 0x04)) { return FALSE; }
-            if (!KAO2_writeFile(file, (LPCVOID) &(frame->sticks[1][1]), 0x04)) { return FALSE; }
-            if (!KAO2_writeFile(file, (LPCVOID) &(frame->buttons), 0x02)) { return FALSE; }
+            FAIL_IF_NULL(KAO2_writeFile(file, (LPCVOID) &(frame->sticks[0][0]), 0x04))
+            FAIL_IF_NULL(KAO2_writeFile(file, (LPCVOID) &(frame->sticks[0][1]), 0x04))
+            FAIL_IF_NULL(KAO2_writeFile(file, (LPCVOID) &(frame->sticks[1][0]), 0x04))
+            FAIL_IF_NULL(KAO2_writeFile(file, (LPCVOID) &(frame->sticks[1][1]), 0x04))
+            FAIL_IF_NULL(KAO2_writeFile(file, (LPCVOID) &(frame->buttons), 0x02))
 
             frame = (frame->next);
         }
@@ -731,43 +741,43 @@ BOOL KAO2_binfileLoad()
 
     buf[0] = '\0';
 
-    if (FALSE != GetOpenFileName(&ofn))
+    if NOT_NULL(GetOpenFileName(&ofn))
     {
         file = CreateFile(buf, GENERIC_READ, 0, NULL, OPEN_EXISTING, 0, NULL);
 
-        if (INVALID_HANDLE_VALUE == file)
+        if IS_INVALID(file)
         {
-            sprintf_s(g_lastMessage, (BUF_SIZE / 2), "Could not open that file.");
+            sprintf_s(g_lastMessage, LASTMSG_SIZE, "Could not open that file.");
             return FALSE;
         }
 
-        if (!KAO2_readFile(file, (LPVOID) buf, 0x08)) { return FALSE; }
+        FAIL_IF_NULL(KAO2_readFile(file, (LPVOID) buf, 0x08))
 
-        if (0 != memcmp(buf, TAS_BINFILE_HEADER, 0x08))
+        if NOT_NULL(memcmp(buf, TAS_BINFILE_HEADER, 0x08))
         {
-            sprintf_s(g_lastMessage, (BUF_SIZE / 2), "Invalid data file header! Expected \"%s\".", TAS_BINFILE_HEADER);
+            sprintf_s(g_lastMessage, LASTMSG_SIZE, "Invalid data file header! Expected \"%s\".", TAS_BINFILE_HEADER);
             CloseHandle(file);
             return FALSE;
         }
 
-        if (!KAO2_readFile(file, (LPVOID) &b, 0x04)) { return FALSE; }
+        FAIL_IF_NULL(KAO2_readFile(file, (LPVOID) &b, 0x04))
 
         prev = NULL;
         new_head = NULL;
 
         for (a = 0; a < b; a++)
         {
-            if (!KAO2_readFile(file, (LPVOID) &l_x, 0x04)) { return FALSE; };
-            if (!KAO2_readFile(file, (LPVOID) &l_y, 0x04)) { return FALSE; };
-            if (!KAO2_readFile(file, (LPVOID) &r_x, 0x04)) { return FALSE; };
-            if (!KAO2_readFile(file, (LPVOID) &r_y, 0x04)) { return FALSE; };
-            if (!KAO2_readFile(file, (LPVOID) &buttons, 0x02)) { return FALSE; };
+            FAIL_IF_NULL(KAO2_readFile(file, (LPVOID) &l_x, 0x04))
+            FAIL_IF_NULL(KAO2_readFile(file, (LPVOID) &l_y, 0x04))
+            FAIL_IF_NULL(KAO2_readFile(file, (LPVOID) &r_x, 0x04))
+            FAIL_IF_NULL(KAO2_readFile(file, (LPVOID) &r_y, 0x04))
+            FAIL_IF_NULL(KAO2_readFile(file, (LPVOID) &buttons, 0x02))
 
             frame = FrameNode_create(l_x, l_y, r_x, r_y, buttons, prev);
 
             prev = frame;
 
-            if (NULL == new_head)
+            if IS_NULL(new_head)
             {
                 new_head = prev;
             }
@@ -794,14 +804,14 @@ BOOL KAO2_binfileLoad()
 
 BOOL KAO2_matchGameExecutableName(const char * filename)
 {
-    if (0 == strcmp(filename, "kao2.exe"))
-    {
-        return TRUE;
-    }
+    const int NAMES = sizeof(KAO2_EXECUTABLE_NAMES) / sizeof(const char *);
 
-    if (0 == strcmp(filename, "kao2_mod.exe"))
+    for (int i = 0; i < NAMES; i++)
     {
-        return TRUE;
+        if IS_NULL(strcmp(filename, KAO2_EXECUTABLE_NAMES[i]))
+        {
+            return TRUE;
+        }
     }
 
     return FALSE;
@@ -816,7 +826,7 @@ BOOL KAO2_matchGameWindowWithProccess(const HWND found_window, const DWORD found
     DWORD pid = 0;
     GetWindowThreadProcessId(found_window, &pid);
 
-    return (found_pid == pid);
+    return EQ(found_pid, pid);
 }
 
 ////////////////////////////////////////////////////////////////
@@ -824,24 +834,24 @@ BOOL KAO2_matchGameWindowWithProccess(const HWND found_window, const DWORD found
 //  and return special handle on success
 ////////////////////////////////////////////////////////////////
 
-HANDLE KAO2_findGameProcess()
+VOID KAO2_findGameProcess()
 {
     HANDLE proc_handle;
-    HWND game_window;
+    HWND glut_window;
     DWORD pids[ENUMERATED_PROCESSES], i, count;
     char buf[BUF_SIZE], * file_name, * p;
 
     /* Find game window */
-    if (NULL == (game_window = FindWindow(KAO2_WINDOW_CLASSNAME, KAO2_WINDOW_NAME)))
+    if IS_NULL(glut_window = FindWindow(KAO2_WINDOW_CLASSNAME, KAO2_WINDOW_NAME))
     {
-        sprintf_s(g_lastMessage, (BUF_SIZE / 2), "Could not locate \"%s\" window!", KAO2_WINDOW_NAME);
+        sprintf_s(g_lastMessage, LASTMSG_SIZE, "Could not locate \"%s\" window!", KAO2_WINDOW_NAME);
     }
     else
     {
-        /* Enumerage processes */
+        /* Enumerate processes */
         if (!EnumProcesses(pids, (sizeof(DWORD) * ENUMERATED_PROCESSES), &count))
         {
-            sprintf_s(g_lastMessage, (BUF_SIZE / 2), "EnumProcesses() failed!");
+            sprintf_s(g_lastMessage, LASTMSG_SIZE, "EnumProcesses() failed!");
         }
         else
         {
@@ -849,42 +859,41 @@ HANDLE KAO2_findGameProcess()
             {
                 proc_handle = OpenProcess((PROCESS_QUERY_INFORMATION | PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION ), FALSE, pids[i]);
 
-                if ((NULL != proc_handle) && (INVALID_HANDLE_VALUE != proc_handle))
+                if (NOT_NULL(proc_handle) && NOT_INVALID(proc_handle))
                 {
-                    buf[0] = '\0';
-                    GetModuleFileNameEx(proc_handle, NULL, buf, BUF_SIZE);
-                    buf[BUF_SIZE - 1] = '\0';
-                    file_name = NULL;
-
-                    for (p = buf; (*p); p++)
+                    if (KAO2_matchGameWindowWithProccess(glut_window, pids[i]))
                     {
-                        if (('/' == (*p)) || ('\\' == (*p)))
-                        {
-                            file_name = p + 1;
-                        }
-                    }
+                        buf[0] = '\0';
+                        GetModuleFileNameEx(proc_handle, NULL, buf, BUF_SIZE);
+                        buf[BUF_SIZE - 1] = '\0';
+                        file_name = NULL;
 
-                    if (file_name)
-                    {
-                        if (KAO2_matchGameExecutableName(file_name))
+                        for (p = buf; (*p); p++)
                         {
-                            if (KAO2_matchGameWindowWithProccess(game_window, pids[i]))
+                            if IS_EITHER((*p), '/', '\\')
                             {
-                                return proc_handle;
+                                file_name = p + 1;
                             }
+                        }
+
+                        if (file_name && KAO2_matchGameExecutableName(file_name))
+                        {
+                            KAO2_gameWindow = glut_window;
+                            KAO2_gameHandle = proc_handle;
+                            return;
                         }
                     }
 
                     CloseHandle(proc_handle);
-                    proc_handle = INVALID_HANDLE_VALUE;
                 }
             }
 
-            sprintf_s(g_lastMessage, (BUF_SIZE / 2), "No process module filename matches the expected executable name!");
+            sprintf_s(g_lastMessage, LASTMSG_SIZE, "No process module filename matches the expected executable name!");
         }
     }
 
-    return INVALID_HANDLE_VALUE;
+    KAO2_gameWindow = NULL;
+    KAO2_gameHandle = INVALID_HANDLE_VALUE;
 }
 
 ////////////////////////////////////////////////////////////////
@@ -898,7 +907,7 @@ BOOL KAO2_windowLoop()
 
     while (PeekMessage(&message, NULL, 0, 0, PM_REMOVE))
     {
-        if (WM_QUIT == message.message)
+        if EQ(WM_QUIT, message.message)
         {
             still_active = FALSE;
         }
@@ -916,11 +925,11 @@ BOOL KAO2_windowLoop()
 
 VOID KAO2_updateStickEdit(const FrameNode_t * frame, int id, int coord)
 {
-    char buf[TINY_BUF_SIZE];
+    char buf[SMALL_BUF_SIZE];
 
-    if (NULL != frame)
+    if NOT_NULL(frame)
     {
-        sprintf_s(buf, TINY_BUF_SIZE, "%.7f", (frame->sticks[id][coord]));
+        sprintf_s(buf, SMALL_BUF_SIZE, "%.7f", (frame->sticks[id][coord]));
     }
     else
     {
@@ -954,16 +963,16 @@ VOID KAO2_updateStickStaticAndEdits(const FrameNode_t * frame, int id, BOOL sett
 BOOL KAO2_stickEditNotify(HWND editbox, WORD notify, int id, int coord)
 {
     int a, b;
-    char buf[TINY_BUF_SIZE];
+    char buf[SMALL_BUF_SIZE];
     float dummy;
 
-    if ((EN_CHANGE == notify) && (NULL != g_currentFrame))
+    if (EQ(EN_CHANGE, notify) && NOT_NULL(g_currentFrame))
     {
-        GetWindowText(editbox, buf, TINY_BUF_SIZE);
+        GetWindowText(editbox, buf, SMALL_BUF_SIZE);
 
         dummy = strtof(buf, NULL);
 
-        if ((HUGE_VAL == errno) || (ERANGE == errno))
+        if IS_EITHER(errno, HUGE_VAL, ERANGE)
         {
             dummy = 0;
         }
@@ -1002,7 +1011,7 @@ VOID KAO2_clearAndUpdateFrameGui(const FrameNode_t * frame)
         SendMessage(KAO2_checkBoxParams[i], BM_SETCHECK, (WPARAM) BST_UNCHECKED, (LPARAM) NULL);
     }
 
-    if (NULL != frame)
+    if NOT_NULL(frame)
     {
         buttons = (frame->buttons);
 
@@ -1026,7 +1035,7 @@ VOID KAO2_clearAndUpdateFrameGui(const FrameNode_t * frame)
 VOID KAO2_showStatus(const char * msg)
 {
     SetWindowText(KAO2_statusLabel, msg);
-    UpdateWindow(KAO2_mainWindow);
+    /* UpdateWindow(KAO2_mainWindow); */
 }
 
 ////////////////////////////////////////////////////////////////
@@ -1039,7 +1048,7 @@ VOID KAO2_iAmError(const char * caption)
 
     KAO2_showStatus(caption);
 
-    if ('\0' != g_lastMessage[0])
+    if NOT_NULL(g_lastMessage[0])
     {
         sprintf_s(buf, BUF_SIZE, "%s\n\n%s", caption, g_lastMessage);
 
@@ -1055,7 +1064,7 @@ BOOL KAO2_writeMem(DWORD address, LPCVOID from, size_t length)
 {
     if (!WriteProcessMemory(KAO2_gameHandle, (LPVOID)address, from, length, NULL))
     {
-        sprintf_s(g_lastMessage, (BUF_SIZE / 2), "Could not write %d bytes to address 0x%08X!", length, address);
+        sprintf_s(g_lastMessage, LASTMSG_SIZE, "Could not write %d bytes to address 0x%08X!", length, address);
         return FALSE;
     }
 
@@ -1070,7 +1079,7 @@ BOOL KAO2_readMem(DWORD address, LPVOID into, size_t length)
 {
     if (!ReadProcessMemory(KAO2_gameHandle, (LPVOID)address, into, length, NULL))
     {
-        sprintf_s(g_lastMessage, (BUF_SIZE / 2), "Could not read %d bytes from address 0x%08X!", length, address);
+        sprintf_s(g_lastMessage, LASTMSG_SIZE, "Could not read %d bytes from address 0x%08X!", length, address);
         return FALSE;
     }
 
@@ -1183,10 +1192,7 @@ BOOL KAO2_nextInjections()
         length = sizeof(KAO2_INJECTION_PLAYMODE);
     }
 
-    if (!KAO2_writeMem(KAO2_CODE_INPUTS_ADDRESS, (LPCVOID)code, length))
-    {
-        return FALSE;
-    }
+    FAIL_IF_NULL(KAO2_writeMem(KAO2_CODE_INPUTS_ADDRESS, (LPCVOID)code, length))
 
     /* Continue injecting new code... :) */
 
@@ -1246,22 +1252,16 @@ BOOL KAO2_runRecordingAlgorithm()
 
         a = (1 + g_totalFrames);
 
-        sprintf_s(buf, SMALL_BUF_SIZE, KAO2_TASMSG_REC, a);
-        if (!KAO2_writeMem(KAO2_TASMSG_ADDRESS, buf, 0x01 + strlen(buf)))
-        {
-            return FALSE;
-        }
+        sprintf_s(buf, MEDIUM_BUF_SIZE, KAO2_TASMSG_REC, a);
+        TAS_MACRO_INJECT_STR(buf, KAO2_TASMSG_ADDRESS)
 
         TAS_MACRO_RECORDING_MSG("");
 
         /* Is this loading mode? */
 
-        if (!KAO2_readMem(KAO2_LOADING_FLAG_ADDRESS, &flag, 0x01))
-        {
-            return FALSE;
-        }
+        FAIL_IF_NULL(KAO2_readMem(KAO2_LOADING_FLAG_ADDRESS, &flag, 0x01))
 
-        if (0x01 == flag)
+        if IS_ONE(flag)
         {
             /* Remember that the game is loading and wait */
 
@@ -1286,6 +1286,11 @@ BOOL KAO2_runRecordingAlgorithm()
 
             a = CHECK_TAM_FLAG(STEP_BY_STEP);
 
+            if (a)
+            {
+                SetForegroundWindow(KAO2_gameWindow);
+            }
+
             TAS_MACRO_WAIT_FLAG_NE_WINLOOP(0x03, KAO2_INPUTS_SEMAPHORE_ADDRESS);
 
             if (!a)
@@ -1295,10 +1300,7 @@ BOOL KAO2_runRecordingAlgorithm()
                 /* Step-by-step mode was disabled before this request */
                 /* was sent. Read inputs prepared by the game. */
 
-                if (!FrameNode_readFromGame(& dummy))
-                {
-                    return FALSE;
-                }
+                FAIL_IF_NULL(FrameNode_readFromGame(& dummy))
 
                 /* Present input frame in GUI */
 
@@ -1315,8 +1317,8 @@ BOOL KAO2_runRecordingAlgorithm()
                 a = (1 + g_totalFrames);
                 TAS_MACRO_RECORDING_MSG
                 (
-                    "(uncheck \"Step-by-Step\" to unfreeze the game on next frame;"
-                    " press \"I-Frame Advance\" when the new input set ready)"
+                    "(uncheck \"Step-by-step\" to unfreeze the game on next frame;"
+                    " press \"I-Frame advance\" when the new input set is ready)"
                 );
 
                 if (!CHECK_TAM_FLAG(CLONE_FRAME))
@@ -1337,10 +1339,7 @@ BOOL KAO2_runRecordingAlgorithm()
 
                 /* Replace in-game input status */
 
-                if (!FrameNode_writeToGame(& dummy))
-                {
-                    return FALSE;
-                }
+                FAIL_IF_NULL(FrameNode_writeToGame(& dummy))
             }
         }
 
@@ -1350,7 +1349,7 @@ BOOL KAO2_runRecordingAlgorithm()
 
         g_totalFrames++;
 
-        if (NULL == (dummy.prev))
+        if IS_NULL(dummy.prev)
         {
             g_frames = dynamic_frame;
         }
@@ -1367,10 +1366,7 @@ BOOL KAO2_runRecordingAlgorithm()
 
     /* Micro message */
 
-    if (!KAO2_writeMem(KAO2_TASMSG_ADDRESS, (LPCVOID)KAO2_TASMSG_STANDBY, 0x01 + strlen(KAO2_TASMSG_STANDBY)))
-    {
-        return FALSE;
-    }
+    TAS_MACRO_INJECT_STR(KAO2_TASMSG_STANDBY, KAO2_TASMSG_ADDRESS)
 
     /* The game will not have to wait on its current input loop */
 
@@ -1388,20 +1384,17 @@ BOOL KAO2_runRecordingAlgorithm()
 BOOL KAO2_runReplayingAlgorithm()
 {
     DWORD a, b, counter = 1;
-    char buf[TINY_BUF_SIZE];
+    char buf[SMALL_BUF_SIZE];
     BYTE flag;
 
     g_currentFrame = g_frames;
 
-    while (NULL != g_currentFrame)
+    while NOT_NULL(g_currentFrame)
     {
         /* Micro message */
 
-        sprintf_s(buf, TINY_BUF_SIZE, KAO2_TASMSG_PLAY, counter, g_totalFrames);
-        if (!KAO2_writeMem(KAO2_TASMSG_ADDRESS, buf, 0x01 + strlen(buf)))
-        {
-            return FALSE;
-        }
+        sprintf_s(buf, SMALL_BUF_SIZE, KAO2_TASMSG_PLAY, counter, g_totalFrames);
+        TAS_MACRO_INJECT_STR(buf, KAO2_TASMSG_ADDRESS)
 
         /* Present input frame in GUI */
 
@@ -1440,10 +1433,7 @@ BOOL KAO2_runReplayingAlgorithm()
 
             /* Send data for this input-frame */
 
-            if (!FrameNode_writeToGame(g_currentFrame))
-            {
-                return FALSE;
-            }
+            FAIL_IF_NULL(FrameNode_writeToGame(g_currentFrame))
         }
 
         /* The game will unfreeze once the the next iteration */
@@ -1456,10 +1446,7 @@ BOOL KAO2_runReplayingAlgorithm()
 
     /* Micro message */
 
-    if (!KAO2_writeMem(KAO2_TASMSG_ADDRESS, (LPCVOID)KAO2_TASMSG_STANDBY, 0x01 + strlen(KAO2_TASMSG_STANDBY)))
-    {
-        return FALSE;
-    }
+    TAS_MACRO_INJECT_STR(KAO2_TASMSG_STANDBY, KAO2_TASMSG_ADDRESS)
 
     /* Unlocks the game from its current input loop */
 
@@ -1563,7 +1550,7 @@ VOID KAO2_LB_refreshFrameListBox(int direction)
     char buf[BUF_SIZE];
     FrameNode_t * frame;
 
-    if (LEFT == direction)
+    if EQ(LEFT, direction)
     {
         g_currentPage -= 1;
 
@@ -1572,7 +1559,7 @@ VOID KAO2_LB_refreshFrameListBox(int direction)
             g_currentPage = 0;
         }
     }
-    else if (RIGHT == direction)
+    else if EQ(RIGHT, direction)
     {
         g_currentPage += 1;
 
@@ -1587,7 +1574,7 @@ VOID KAO2_LB_refreshFrameListBox(int direction)
 
     SendMessage(KAO2_listBoxFrames, LB_RESETCONTENT, (WPARAM)NULL, (LPARAM)NULL);
 
-    while ((NULL != frame) && (counter > 0))
+    while (NOT_NULL(frame) && (counter > 0))
     {
         KAO2_genInputFrameText(buf, frame, id);
         SendMessage(KAO2_listBoxFrames, LB_ADDSTRING, (WPARAM)NULL, (LPARAM)buf);
@@ -1610,7 +1597,7 @@ VOID KAO2_LB_selectInputFrameOrUpdateGui(int lb_id, BOOL update)
     int i;
     char buf[BUF_SIZE];
 
-    if ((NULL == g_currentFrame) && (lb_id >= 0))
+    if (IS_NULL(g_currentFrame) && (lb_id >= 0))
     {
         g_currentFrameId = lb_id + g_currentPage * FRAMES_PER_PAGE;
         g_currentFrame = FrameNode_getIth(g_frames, g_currentFrameId);
@@ -1689,10 +1676,10 @@ int KAO2_LB_getIndexAndAdjustPage()
 
 VOID KAO2_LB_insertNewInputFrame()
 {
-    char buf[TINY_BUF_SIZE];
+    char buf[SMALL_BUF_SIZE];
     FrameNode_t * prev_frame;
 
-    if (NULL == g_frames)
+    if IS_NULL(g_frames)
     {
         g_frames = FrameNode_createEmpty(NULL);
         g_currentFrame = g_frames;
@@ -1702,13 +1689,13 @@ VOID KAO2_LB_insertNewInputFrame()
     }
     else
     {
-        if (NULL == g_currentFrame)
+        if IS_NULL(g_currentFrame)
         {
             g_currentFrame = g_frames;
             prev_frame = NULL;
 
             g_currentFrameId = 0;
-            while (NULL != g_currentFrame)
+            while NOT_NULL(g_currentFrame)
             {
                 prev_frame = g_currentFrame;
                 g_currentFrame = g_currentFrame->next;
@@ -1733,7 +1720,7 @@ VOID KAO2_LB_insertNewInputFrame()
         g_totalFrames++;
     }
 
-    sprintf_s(buf, TINY_BUF_SIZE, "Inserted frame #%03d.", (1 + g_currentFrameId));
+    sprintf_s(buf, SMALL_BUF_SIZE, "Inserted frame #%03d.", (1 + g_currentFrameId));
     SetWindowText(KAO2_listBoxStatus, buf);
 
     KAO2_LB_refreshFrameListBox(-1);
@@ -1753,22 +1740,22 @@ BOOL KAO2_LB_removeCurrentInputFrame()
     FrameNode_t * prev_frame;
     FrameNode_t * next_frame;
 
-    if (NULL != g_currentFrame)
+    if NOT_NULL(g_currentFrame)
     {
         prev_frame = (g_currentFrame->prev);
         next_frame = (g_currentFrame->next);
 
-        if ((NULL != prev_frame) && (g_currentFrameId > 0))
+        if (NOT_NULL(prev_frame) && (g_currentFrameId > 0))
         {
             /* There is at least one frame before */
 
             (prev_frame->next) = next_frame;
         }
-        else if ((NULL == prev_frame) && (0 == g_currentFrameId))
+        else if (IS_NULL(prev_frame) && IS_NULL(g_currentFrameId))
         {
             /* Must be the first frame */
 
-            if (g_currentFrame != g_frames)
+            if NE(g_currentFrame, g_frames)
             {
                 return FALSE;
             }
@@ -1787,14 +1774,14 @@ BOOL KAO2_LB_removeCurrentInputFrame()
         free(g_currentFrame);
         g_totalFrames--;
 
-        if ((NULL == next_frame) && (g_currentFrameId == g_totalFrames))
+        if (IS_NULL(next_frame) && EQ(g_currentFrameId, g_totalFrames))
         {
             /* Was the last frame (or the only frame) */
 
             g_currentFrame = prev_frame;
             g_currentFrameId--;
         }
-        else if ((NULL != next_frame) && (g_currentFrameId < g_totalFrames))
+        else if (IS_NULL(next_frame) && (g_currentFrameId < g_totalFrames))
         {
             /* Neither last nor first */
 
@@ -1858,7 +1845,7 @@ LRESULT CALLBACK KAO2_winProcAnyStick(int id, HWND hWnd, UINT Msg, WPARAM wParam
             Ellipse(ps.hdc, 1, 1, rect.right - 1, rect.bottom - 1);
             Rectangle(ps.hdc, halves.x - 2, halves.y - 2, halves.x + 3, halves.y + 3);
 
-            if (NULL != g_currentFrame)
+            if NOT_NULL(g_currentFrame)
             {
                 SetDCPenColor(ps.hdc, RGB(255, 0, 0));
 
@@ -1871,7 +1858,7 @@ LRESULT CALLBACK KAO2_winProcAnyStick(int id, HWND hWnd, UINT Msg, WPARAM wParam
                 /* Notice how Left Stick is inverted on Y-axis, */
                 /* while the Right Stick is not! */
                 line_end.x = halves.x + ((int)fp.x);
-                line_end.y = halves.y + ((0 == id) ? (-1) : 1) * ((int) fp.y);
+                line_end.y = halves.y + (IS_NULL(id) ? (-1) : 1) * ((int) fp.y);
 
                 for (i = 0; i < (2 * 2); i++)
                 {
@@ -1891,7 +1878,7 @@ LRESULT CALLBACK KAO2_winProcAnyStick(int id, HWND hWnd, UINT Msg, WPARAM wParam
 
         case WM_LBUTTONDOWN:
         {
-            if (NULL != g_currentFrame)
+            if NOT_NULL(g_currentFrame)
             {
                 GetClientRect(hWnd, &rect);
                 MapWindowPoints(hWnd, GetParent(hWnd), (LPPOINT)&rect, 2);
@@ -1912,7 +1899,7 @@ LRESULT CALLBACK KAO2_winProcAnyStick(int id, HWND hWnd, UINT Msg, WPARAM wParam
                     fp.y = ((pt.y - rect.top) - fp.y) / (fp.y - 4);
 
                     g_currentFrame->sticks[id][0] = fp.x;
-                    g_currentFrame->sticks[id][1] = ((0 == id) ? (-1) : 1) * fp.y;
+                    g_currentFrame->sticks[id][1] = (IS_NULL(id) ? (-1) : 1) * fp.y;
 
                     KAO2_LB_selectInputFrameOrUpdateGui((-1), TRUE);
                 }
@@ -1952,18 +1939,18 @@ LRESULT CALLBACK KAO2_winProcRightStick(HWND hWnd, UINT Msg, WPARAM wParam, LPAR
 
 LRESULT CALLBACK KAO2_winProcEditFramerule(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam)
 {
-    char buf[TINY_BUF_SIZE];
+    char buf[SMALL_BUF_SIZE];
     float fps;
 
-    if ((WM_KEYDOWN == Msg) && CHECK_CTRL_FLAG(ALLOWBTNS) && (VK_RETURN == wParam))
+    if (EQ(WM_KEYDOWN, Msg) && CHECK_CTRL_FLAG(ALLOWBTNS) && EQ(VK_RETURN, wParam))
     {
         DISABLE_CTRL_FLAG(ALLOWBTNS)
 
-        GetWindowText(hWnd, buf, TINY_BUF_SIZE);
+        GetWindowText(hWnd, buf, SMALL_BUF_SIZE);
 
         fps = strtof(buf, NULL);
 
-        if ((HUGE_VAL == errno) || (ERANGE == errno))
+        if IS_EITHER(errno, HUGE_VAL, ERANGE)
         {
             fps = 0;
         }
@@ -2032,15 +2019,15 @@ LRESULT CALLBACK KAO2_windowProcedure(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM
                     {
                         DISABLE_CTRL_FLAG(ALLOWBTNS)
 
-                        KAO2_gameHandle = KAO2_findGameProcess();
+                        KAO2_findGameProcess();
 
-                        if (INVALID_HANDLE_VALUE == KAO2_gameHandle)
+                        if IS_INVALID(KAO2_gameHandle)
                         {
                             KAO2_iAmError("Could not attach the \"kao2.exe\" game process!");
                         }
                         else
                         {
-                            KAO2_showStatus("KAO2 attached...");
+                            KAO2_showStatus("KAO2 attached. ^^");
 
                             if (KAO2_firstInjection())
                             {
@@ -2156,7 +2143,7 @@ LRESULT CALLBACK KAO2_windowProcedure(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM
                         MACRO_ASSERT_GAME_HANDLE
                         else if (KAO2_nextInjections())
                         {
-                            sprintf_s(buf, SMALL_BUF_SIZE, "TAS mode changed to RE%s :)", (a ? "CORDING" : "PLAY"));
+                            sprintf_s(buf, MEDIUM_BUF_SIZE, "TAS mode changed to RE%s :)", (a ? "CORDING" : "PLAY"));
                             KAO2_showStatus(buf);
                         }
                         else
@@ -2252,12 +2239,12 @@ LRESULT CALLBACK KAO2_windowProcedure(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM
                         DISABLE_CTRL_FLAG(ALLOWBTNS)
                         a = FALSE;
 
-                        if (EN_SETFOCUS == HIWORD(wParam))
+                        if EQ(EN_SETFOCUS, HIWORD(wParam))
                         {
                             a = TRUE;
                             ENABLE_CTRL_FLAG(FPS_FOCUS);
                         }
-                        else if (EN_KILLFOCUS == HIWORD(wParam))
+                        else if EQ(EN_KILLFOCUS, HIWORD(wParam))
                         {
                             a = TRUE;
                             DISABLE_CTRL_FLAG(FPS_FOCUS);
@@ -2361,7 +2348,7 @@ LRESULT CALLBACK KAO2_windowProcedure(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM
                         g_currentFrameId = (-1);
                         /* "currentPage" stays unchanged */
 
-                        KAO2_LB_refreshFrameListBox((LOWORD(wParam) == IDM_BUTTON_PREV_PAGE) ? LEFT : RIGHT);
+                        KAO2_LB_refreshFrameListBox(EQ(LOWORD(wParam), IDM_BUTTON_PREV_PAGE) ? LEFT : RIGHT);
 
                         ENABLE_CTRL_FLAG(ALLOWBTNS)
                         return 0;
@@ -2418,7 +2405,7 @@ LRESULT CALLBACK KAO2_windowProcedure(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM
                 {
                     for (b = 0; b < 2; b++)
                     {
-                        if ((HWND)lParam == KAO2_editBoxSticks[a][b])
+                        if EQ((HWND)lParam, KAO2_editBoxSticks[a][b])
                         {
                             if (KAO2_stickEditNotify((HWND)lParam, HIWORD(wParam), a, b))
                             {
@@ -2430,9 +2417,9 @@ LRESULT CALLBACK KAO2_windowProcedure(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM
             }
 
             /* Listbox of i-frames */
-            if (check_more_buttons && ((HWND)lParam == KAO2_listBoxFrames))
+            if (check_more_buttons && EQ((HWND)lParam, KAO2_listBoxFrames))
             {
-                if (CHECK_CTRL_FLAG(ALLOWBTNS) && (LBN_SELCHANGE == HIWORD(wParam)))
+                if (CHECK_CTRL_FLAG(ALLOWBTNS) && EQ(LBN_SELCHANGE, HIWORD(wParam)))
                 {
                     DISABLE_CTRL_FLAG(ALLOWBTNS)
 
@@ -2456,7 +2443,7 @@ LRESULT CALLBACK KAO2_windowProcedure(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM
             /* Current i-frame parameters, CheckBoxes */
             if (check_more_buttons && (LOWORD(wParam) >= IDM_BUTTON_FRAME_PARAM))
             {
-                if (WPARAM_CLICKED && (NULL != g_currentFrame))
+                if (WPARAM_CLICKED && NOT_NULL(g_currentFrame))
                 {
                     a = (0x01 << (LOWORD(wParam) - IDM_BUTTON_FRAME_PARAM));
 
@@ -2501,6 +2488,7 @@ BOOL KAO2_createWindows(HINSTANCE hInstance)
 {
     HWND test_window;
     WNDCLASSEX window_class;
+    RECT real_window_rect;
 
     const LONG_PTR stickProcedures[2] =
     {
@@ -2508,15 +2496,17 @@ BOOL KAO2_createWindows(HINSTANCE hInstance)
         (LONG_PTR) KAO2_winProcRightStick
     };
 
-    const int KAO2TAS_WINDOW_WIDTH  = 640;
-    const int KAO2TAS_WINDOW_HEIGHT = 680;
-    const int PADDING = 8;
+    const int KAO2TAS_WINDOW_WIDTH    = 640;
+    const int KAO2TAS_WINDOW_HEIGHT   = 680;
+    const int PADDING                 =   8;
+    const int WINDOW_WIDTH_WO_PADDING = KAO2TAS_WINDOW_WIDTH - 2 * PADDING;
 
     const int UPPER_BUTTONS_PER_ROW = 3;
-
-    const int BUTTON_WIDTH = (KAO2TAS_WINDOW_WIDTH -
+    const int BUTTON_WIDTH          = (KAO2TAS_WINDOW_WIDTH -
         (1 + UPPER_BUTTONS_PER_ROW) * PADDING) / UPPER_BUTTONS_PER_ROW;
-    const int LABEL_HEIGHT = (16 + 4);
+
+    const int FONT_HEIGHT   = 16;
+    const int LABEL_HEIGHT  = FONT_HEIGHT + 4;
     const int BUTTON_HEIGHT = 24;
 
     const int LISTBOX_HEIGHT    =  96;
@@ -2524,8 +2514,6 @@ BOOL KAO2_createWindows(HINSTANCE hInstance)
     const int OPTION_WIDTH      = 144;
 
     LONG i, j, x = PADDING, y = PADDING, x2, y2;
-
-    RECT real_window_rect;
 
     /* Register Window */
 
@@ -2537,50 +2525,41 @@ BOOL KAO2_createWindows(HINSTANCE hInstance)
     window_class.lpfnWndProc = KAO2_windowProcedure;
     window_class.lpszClassName = KAO2TAS_WINDOW_CLASSNAME;
 
-    if (!RegisterClassEx(&window_class))
-    {
-        return FALSE;
-    }
+    FAIL_IF_NULL(RegisterClassEx(&window_class))
 
     /* Create fonts */
 
     KAO2_font01 = CreateFont
     (
-        16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+        FONT_HEIGHT, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
         ANSI_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
         DEFAULT_QUALITY, (DEFAULT_PITCH | FF_DONTCARE),
         "Verdana"
     );
 
-    if (NULL == KAO2_font01)
-    {
-        return FALSE;
-    }
+    FAIL_IF_NULL(KAO2_font01)
 
     KAO2_font02 = CreateFont
     (
-        16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+        FONT_HEIGHT, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
         ANSI_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
         DEFAULT_QUALITY, (DEFAULT_PITCH | FF_MODERN),
         "Courier New"
     );
 
-    if (NULL == KAO2_font02)
-    {
-        return FALSE;
-    }
+    FAIL_IF_NULL(KAO2_font02)
 
     /* Create Main Window */
 
-    real_window_rect.left = 0;
-    real_window_rect.right = KAO2TAS_WINDOW_WIDTH;
-    real_window_rect.top = 0;
+    real_window_rect.left   = 0;
+    real_window_rect.right  = KAO2TAS_WINDOW_WIDTH;
+    real_window_rect.top    = 0;
     real_window_rect.bottom = KAO2TAS_WINDOW_HEIGHT;
 
     i = (WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX);
     AdjustWindowRect(&real_window_rect, i, FALSE);
 
-    real_window_rect.right -= real_window_rect.left;
+    real_window_rect.right  -= real_window_rect.left;
     real_window_rect.bottom -= real_window_rect.top;
 
     KAO2_mainWindow = CreateWindow
@@ -2602,8 +2581,7 @@ BOOL KAO2_createWindows(HINSTANCE hInstance)
     (
         WS_EX_CLIENTEDGE, "STATIC", "",
         WS_VISIBLE | WS_CHILD,
-        x, y,
-        KAO2TAS_WINDOW_WIDTH - 2 * PADDING, y2,
+        x, y, WINDOW_WIDTH_WO_PADDING, y2,
         KAO2_mainWindow, NULL, hInstance, NULL
     );
 
@@ -2630,7 +2608,7 @@ BOOL KAO2_createWindows(HINSTANCE hInstance)
 
         i++;
 
-        if (0 == (i % UPPER_BUTTONS_PER_ROW))
+        if IS_NULL(i % UPPER_BUTTONS_PER_ROW)
         {
             x = PADDING;
             y += (BUTTON_HEIGHT + PADDING);
@@ -2647,15 +2625,13 @@ BOOL KAO2_createWindows(HINSTANCE hInstance)
 
     /* Upper Checkboxes */
 
-    x2 = (KAO2TAS_WINDOW_WIDTH - 2 * PADDING);
-
     for (i = 0; i < UPPER_CHECKBOX_COUNT; i++)
     {
         test_window = CreateWindow
         (
             "BUTTON", UPPER_CHECKBOX_NAMES[i],
             WS_VISIBLE | WS_CHILD | BS_AUTOCHECKBOX,
-            x, y, x2, LABEL_HEIGHT,
+            x, y, WINDOW_WIDTH_WO_PADDING, LABEL_HEIGHT,
             KAO2_mainWindow, (HMENU)(IDM_CHECK_MODE + i), hInstance, NULL
         );
 
@@ -2680,10 +2656,7 @@ BOOL KAO2_createWindows(HINSTANCE hInstance)
 
     KAO2_editFrameruleProcedure = (WNDPROC) SetWindowLongPtrA(KAO2_frameRuleEditBox, GWLP_WNDPROC, (LONG_PTR) KAO2_winProcEditFramerule);
 
-    if (NULL == KAO2_editFrameruleProcedure)
-    {
-        return FALSE;
-    }
+    FAIL_IF_NULL(KAO2_editFrameruleProcedure)
 
     x += (x2 + PADDING);
     y2 = (3 * LABEL_HEIGHT);
@@ -2707,7 +2680,7 @@ BOOL KAO2_createWindows(HINSTANCE hInstance)
     (
         WS_EX_CLIENTEDGE, "LISTBOX", "",
         WS_VISIBLE | WS_CHILD | WS_VSCROLL | LBS_HASSTRINGS | LBS_NOTIFY,
-        x, y, (KAO2TAS_WINDOW_WIDTH - 2 * PADDING), LISTBOX_HEIGHT,
+        x, y, WINDOW_WIDTH_WO_PADDING, LISTBOX_HEIGHT,
         KAO2_mainWindow, NULL, hInstance, NULL
     );
 
@@ -2780,17 +2753,11 @@ BOOL KAO2_createWindows(HINSTANCE hInstance)
             KAO2_mainWindow, NULL, hInstance, NULL
         );
 
-        if (NULL == KAO2_staticBoxSticks[i])
-        {
-            return FALSE;
-        }
+        FAIL_IF_NULL(KAO2_staticBoxSticks[i])
 
         KAO2_staticSticksProcedures[i] = (WNDPROC) SetWindowLongPtrA(KAO2_staticBoxSticks[i], GWLP_WNDPROC,  stickProcedures[i]);
 
-        if (NULL == KAO2_staticSticksProcedures[i])
-        {
-            return FALSE;
-        }
+        FAIL_IF_NULL(KAO2_staticSticksProcedures[i])
 
         x += (BLACKSQUARE_WIDTH + PADDING);
 
@@ -2840,12 +2807,9 @@ BOOL KAO2_createWindows(HINSTANCE hInstance)
         KAO2_mainWindow, NULL, hInstance, NULL
     );
 
-    if (NULL == test_window)
-    {
-        return FALSE;
-    }
+    FAIL_IF_NULL(test_window)
 
-    /* CheckBoxes represengint the i-frame attributes */
+    /* CheckBoxes representing the i-frame attributes */
 
     i = 0;
 
@@ -2863,7 +2827,7 @@ BOOL KAO2_createWindows(HINSTANCE hInstance)
 
         i++;
 
-        if (0 == (i % 8))
+        if IS_NULL(i % 8)
         {
             x += (OPTION_WIDTH + PADDING);
             y -= 7 * (LABEL_HEIGHT + PADDING);
@@ -2931,6 +2895,7 @@ int CALLBACK WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance,
     KAO2_font01 = NULL;
     KAO2_font02 = NULL;
 
+    KAO2_gameWindow = NULL;
     KAO2_gameHandle = INVALID_HANDLE_VALUE;
 
     g_frames         = NULL;
@@ -2950,11 +2915,13 @@ int CALLBACK WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance,
     {
         while (KAO2_windowLoop())
         {
-            if ((INVALID_HANDLE_VALUE != KAO2_gameHandle) && GetExitCodeProcess(KAO2_gameHandle, &i))
+            if (NOT_INVALID(KAO2_gameHandle) && GetExitCodeProcess(KAO2_gameHandle, &i))
             {
-                if (STILL_ACTIVE != i)
+                if NE(STILL_ACTIVE, i)
                 {
+                    KAO2_gameWindow = NULL;
                     KAO2_gameHandle = INVALID_HANDLE_VALUE;
+
                     KAO2_showStatus("Game has been closed! Please re-launch \"Kao the Kangaroo: Round 2\".");
                 }
             }
@@ -2963,22 +2930,22 @@ int CALLBACK WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance,
 
     /* Ending the program */
 
-    if (NULL != KAO2_font01)
+    if NOT_NULL(KAO2_font01)
     {
         DeleteObject((HGDIOBJ)KAO2_font01);
     }
 
-    if (NULL != KAO2_font02)
+    if NOT_NULL(KAO2_font02)
     {
         DeleteObject((HGDIOBJ)KAO2_font02);
     }
 
-    if (NULL != g_frames)
+    if NOT_NULL(g_frames)
     {
         FrameNode_remove(&g_frames);
     }
 
-    if (INVALID_HANDLE_VALUE != KAO2_gameHandle)
+    if NOT_INVALID(KAO2_gameHandle)
     {
         CloseHandle(KAO2_gameHandle);
     }
