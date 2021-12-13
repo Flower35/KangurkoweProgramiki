@@ -6,23 +6,83 @@
 (2021-11-19)
  * Descriptions for a few common structures and a few global addresses.
 
+(2021-11-21)
+ * Added a few abstractions (eSerializable, eArray) and more structures.
+
+(2021-12-12)
+ * Slowly expanding the doc.
+
 
 ================================================================
 == Structures and Classes
 ================================================================
 
     ------------------------------------------------
-    -- eString struct
+    -- eSerializable interface
+
+    void serialize(eArchive & ar);
+
+    ------------------------------------------------
+    -- eReferable interface
+
+    void incRef();
+    eReferable decRef(); // object can only exist on heap!!!
+
+    ------------------------------------------------
+    -- eRef<T> wrapper
+    -- ( eRef<T> implements eSerializable )
+    -- ( T implements eSerializable and eReferable )
+    -- size: 0x0004 bytes (32-bit pointer)
+
+    (T *) ([...]+0000) : pointer to an object of type "T"
+
+    ------------------------------------------------
+    -- TypeInfo struct
+    -- size: TODO
+
+      (DWORD)          ([...]+0000) : ClassID
+      (LPCSTR)         [[...]+0004] : ClassName
+      (eRef<TypeInfo>) [[...]+0008] : parent (TypeInfo for base class)
+      (LPVOID)         [[...]+000C] : UNKNOWN
+      (LPVOID)         [[...]+0010] : func to create a new class instance
+      (LPVOID)         [[...]+0014] : enum function
+      (LPVOID)         [[...]+0018] : UNKNOWN
+
+    ------------------------------------------------
+    -- eArray<T> struct
+    -- ( eArray<T> implements eSerializable )
+    -- ( T implements eSerializable )
+    -- size: 0x000C (12) bytes
+
+    (DWORD) ([...]+0000) : count (number of valid items)
+    (DWORD) ([...]+0004) : max size (it is unwise to re-allocate memory
+                            while removing some items, but `if (count >= maxSize)`
+                            holds true before inserting a new item, then the dynamic
+                            array of items of type "T" needs to be allocated again)
+    (T *)   ([...]+0008) : dynamically-allocated array of "T" instances
+
+    ------------------------------------------------
+    -- basic_string struct
+    -- ( basic_string implements eSerializable and eReferable )
     -- size: varying, minimum 0x0D (13) bytes
 
-    (DWORD)  ([...]+0000) : number of references, object shall be destroyed `if (0 == refCounter)`
+    (DWORD)  ([...]+0000) : number of references
+                             object shall be destroyed `if (0 == refCounter)`
     (DWORD)  ([...]+0004) : text length
     (DWORD)  ([...]+0008) : length including the NULL-TERMINATOR byte
     (CHAR[]) ([...]+000C) : actual text, size depends on allocated length, always NULL-terminated
 
     ------------------------------------------------
+    -- eString wrapper
+    -- ( eString implements eSerializable )
+    -- size: 0x0004 bytes (32-bit pointer)
+
+    (basic_string *) ([...]+0000) : actual string object, that can have multiple references
+
+    ------------------------------------------------
     -- eSRP struct (Scale Rotation Position)
-    -- size: 0x020 (32) bytes
+    -- ( eSRP implements eSerializable )
+    -- size: 0x0020 (32) bytes
 
     (eQuat)   ([...]+0000) : rotation (inverse quaternion)
       (FLOAT)   ([...]+0000) : rot.x
@@ -36,530 +96,633 @@
     (FLOAT)   ([...]+001C) : scale
 
     ------------------------------------------------
+    -- eAnimate struct
+    -- ( eAnimate implements eSerializable )
+    -- size: 0x003C (60) bytes
+
+    (VPTR)                        [[...]+0000] : eAnimate vptr (005D15D0)
+    (eArray<eRef<eTrack>>)        ([...]+0004) : animation tracks
+    (eBiList<eRef<eAnimState>> *) [[...]+0010] : anim state A
+    (eBiList<eRef<eAnimState>> *) [[...]+0014] : anim state B
+                                                  (almost always the copy of the first list)
+    (BOOL)                        ([...]+0018) : isPaused
+    (FLOAT)                       ([...]+001C) : current delta frame time
+                                                  (updated after multiplication by animRate)
+    (FLOAT)                       ([...]+0020) : total elapsed frame time
+                                                  (updated after multiplication by animRate)
+    (FLOAT)                       ([...]+0024) : animRate to blend to
+    (FLOAT)                       ([...]+0028) : current animRate
+    (FLOAT)                       ([...]+002C) : total elapsed frame time
+                                                  (unaffected by animRate)
+    (FLOAT)                       ([...]+0030) : UNKNOWN (animRate-blending related)
+    (DWORD)                       ([...]+0034) : UNKNOWN
+    (BOOL)                        ([...]+0038) : UNKNOWN
+
+    ------------------------------------------------
     -- eLevelDesc struct
+    -- ( eRefCounter :: eLevelDesc )
     -- size: 0x023C (572) bytes
 
-    (VPTR)       [[...]+0000] : eLevelDesc vptr (TODO)
-    (DWORD)      ([...]+0004) : eRefCounter refCount
-    (eString *)  [[...]+0008] : lang (display) name
-    (eString *)  [[...]+000C] : filename (ar)
-    (eArray)     ([...]+0010) : shortnames
-      (DWORD)      ([...]+0010) : count
-      (DWORD)      ([...]+0014) : maxSize
-      (eString **) [[...]+0018] : shortnames
-    (BOOL)       ([...]+001C) : isUnlocked
-    (DWORD)      ([...]+0020) : UNKNOWN (number of set bools?)
-    (DWORD)      ([...]+0024) : CONST total ducats
-    (DWORD)      ([...]+0028) : CONST total crystals
-    (DWORD)      ([...]+002C) : CONST total stars
-    (DWORD)      ([...]+0030) : collected ducats
-    (DWORD)      ([...]+0034) : collected crystals
-    (DWORD)      ([...]+0038) : collected stars
-    (BOOL[])     ([...]+003C) : 0x200 (512) Persistent Actor booleans
+    (VPTR)            [[...]+0000] : eLevelDesc vptr (005D263C)
+    (DWORD)           ([...]+0004) : eRefCounter refCount
+    (eString)         ([...]+0008) : lang (display) name
+    (eString)         ([...]+000C) : filename (ar)
+    (eArray<eString>) ([...]+0010) : shortnames
+    (BOOL)            ([...]+001C) : isUnlocked
+    (DWORD)           ([...]+0020) : UNKNOWN (number of set bools?)
+    (DWORD)           ([...]+0024) : CONST total ducats
+    (DWORD)           ([...]+0028) : CONST total crystals
+    (DWORD)           ([...]+002C) : CONST total stars
+    (DWORD)           ([...]+0030) : collected ducats
+    (DWORD)           ([...]+0034) : collected crystals
+    (DWORD)           ([...]+0038) : collected stars
+    (BOOL[])          ([...]+003C) : 0x200 (512) Persistent Actor booleans
 
     ------------------------------------------------
     -- eMenuItemGroup struct
-    -- size: 0x30 (48) bytes
+    -- size: 0x0030 (48) bytes
 
-    (VPTR)             [[...]+0000] : eMenuItemGroup vptr (005D601C)
-    (FLOAT)            ([...]+0004) : UNKNOWN
-    (DWORD)            ([...]+0008) : currently selected item ID
-    (eArray)           ([...]+000C) : menuItems
-      (DWORD)            ([...]+000C) : count
-      (DWORD)            ([...]+0010) : maxSize
-      (eMenuItem *)      [[...]+0014] : menuItems
-    (DWORD)            ([...]+0018) : UNKNOWN
-    (DWORD)            ([...]+001C) : `BAADF00D`
-    (DWORD)            ([...]+0020) : `BAADF00D`
-    (DWORD)            ([...]+0024) : UNKNOWN
-    (eMenu *)          [[...]+0028] : UNKNOWN
-    (eSndEmiterAmb *)  [[...]+002C] : UNKNOWN
+    (VPTR)                    [[...]+0000] : eMenuItemGroup vptr (005D601C)
+    (FLOAT)                   ([...]+0004) : UNKNOWN
+    (DWORD)                   ([...]+0008) : currently selected item ID
+    (eArray<eRef<eMenuItem>>) ([...]+000C) : menuItems
+    (DWORD)                   ([...]+0018) : UNKNOWN
+    (DWORD)                   ([...]+001C) : `BAADF00D`
+    (DWORD)                   ([...]+0020) : `BAADF00D`
+    (DWORD)                   ([...]+0024) : UNKNOWN
+    (eRef<eMenu>)             [[...]+0028] : UNKNOWN
+    (eRef<eSndEmiterAmb>)     [[...]+002C] : UNKNOWN
 
     ------------------------------------------------
     -- eMenuItem struct
-    -- size: 0x44 (68) bytes
+    -- size: 0x0044 (68) bytes
 
-    (eString *)         [[...]+0000] : text
-    (FLOAT)             ([...]+0004) : scale
-    (DWORD)             ([...]+0008) : Gamelet Action ID (can be 0)
-    (eMenuItemGroup *)  [[...]+000C] : sub-menu to be called (can be NULL)
-    (DWORD)             ([...]+0010) : UNKNOWN
-    (BOOL)              ([...]+0014) : isSelectable
-    (BOOL)              ([...]+0015) : isVisible
-    (FLOAT)             ([...]+0018) : color Red   (0.0 - 1.0)
-    (FLOAT)             ([...]+001C) : color Green (0.0 - 1.0)
-    (FLOAT)             ([...]+0020) : color Blue  (0.0 - 1.0)
-    (VOID)              [[...]+0024] : UNKNOWN
-    (DWORD)             ([...]+0028) : `BAADF00D`
-    (DWORD)             ([...]+002C) : `BAADF00D`
-    (DWORD)             ([...]+0030) : UNKNOWN
-    (DWORD)             ([...]+0034) : `BAADF00D`
-    (DWORD)             ([...]+0038) : `BAADF00D`
-    (DWORD)             ([...]+003C) : `BAADF00D`
-    (BOOL)              ([...]+0040) : UNKNOWN
+    (eString)          ([...]+0000) : text
+    (FLOAT)            ([...]+0004) : scale
+    (DWORD)            ([...]+0008) : Gamelet Action ID (can be 0)
+    (eMenuItemGroup *) [[...]+000C] : sub-menu to be called (can be NULL)
+    (DWORD)            ([...]+0010) : UNKNOWN
+    (BOOL)             ([...]+0014) : isSelectable
+    (BOOL)             ([...]+0015) : isVisible
+    (FLOAT)            ([...]+0018) : color Red   (0.0 - 1.0)
+    (FLOAT)            ([...]+001C) : color Green (0.0 - 1.0)
+    (FLOAT)            ([...]+0020) : color Blue  (0.0 - 1.0)
+    (VOID)             [[...]+0024] : UNKNOWN
+    (DWORD)            ([...]+0028) : `BAADF00D`
+    (DWORD)            ([...]+002C) : `BAADF00D`
+    (DWORD)            ([...]+0030) : UNKNOWN
+    (DWORD)            ([...]+0034) : `BAADF00D`
+    (DWORD)            ([...]+0038) : `BAADF00D`
+    (DWORD)            ([...]+003C) : `BAADF00D`
+    (BOOL)             ([...]+0040) : UNKNOWN
 
     ------------------------------------------------
-    -- eObject::eRefCounter
-    -- size: 0x08 (8) bytes
+    -- eObject class
+    -- ( eObject implements eSerializable )
+    -- size: 0x0004 bytes
+
+    (VPTR) [[...]+0000] : eObject vptr (TODO)
+
+    ------------------------------------------------
+    -- eRefCounter class
+    -- ( eObject :: eRefCounter )
+    -- ( eRefCounter implements eReferable )
+    -- size: 0x0008 bytes
 
     (VPTR)  [[...]+0000] : eRefCounter vptr (005CD9A4)
-    (DWORD) ([...]+0004) : number of references, object shall be destroyed `if (0 == refCounter)`
+    (DWORD) ([...]+0004) : number of references
+                            object shall be destroyed `if (0 == refCounter)`
 
     ------------------------------------------------
-    -- eObject::eRefCounter::State
-    -- size: 0x78 (120) bytes
+    -- State class
+    -- ( eRefCounter :: State )
+    -- size: 0x0078 (120) bytes
 
-    (VPTR)              [[...]+0000] : State vptr (005D8088)
-    (DWORD)             ([...]+0004) : eRefCounter refCount
-    (BOOL)              ([...]+0008) : isDefault
-    (BOOL)              ([...]+0009) : isTerminal
-    (eString *)         [[...]+000C] : state name
-    (State *)           [[...]+0010] : owner state
-    (eArray)            ([...]+0014) : subStates
-      (DWORD)             ([...]+0014) : subStates count
-      (DWORD)             ([...]+0018) : subStates maxSize
-      (State **)          [[...]+001C] : subStates array
-    (State *)           [[...]+0020] : default state (linking to active state until not NULL)
-    (eArray)            ([...]+0024) : stringSections
-      (DWORD)             ([...]+0024) : stringSections count
-      (DWORD)             ([...]+0028) : stringSections maxSize
-      (StringSection **)  [[...]+002C] : stringSections array
-    (eArray)            ([...]+0030) : properties
-      (DWORD)             ([...]+0030) : properties count
-      (DWORD)             ([...]+0034) : properties maxSize
-      (Property **)       [[...]+0038] : properties array
-    (VoidInstruction *) ([...]+003C) : enter instructions
-    (VoidInstruction *) ([...]+0040) : update instructions
-    (VoidInstruction *) ([...]+0044) : leave instructions
-    (eArray)            ([...]+0048) : whens
-      (DWORD)             ([...]+0048) : whens count
-      (DWORD)             ([...]+004C) : whens maxSize
-      (When **)           [[...]+0050] : whens array
-    (eArray)            ([...]+0054) : gadgets
-      (DWORD)             ([...]+0054) : gadgets count
-      (DWORD)             ([...]+0058) : gadgets maxSize
-      (Gadget **)         [[...]+005C] : gadgets array
-    (eArray)            ([...]+0060) : nodeRefs
-      (DWORD)             ([...]+0060) : nodeRefs count
-      (DWORD)             ([...]+0064) : nodeRefs maxSize
-      (NodeRef **)        [[...]+0068] : nodeRefs array
-    (eString *)         [[...]+006C] : track (animation) name
-    (DWORD)             [[...]+0070] : UNKNOWN
-    (eString *)         [[...]+0074] : UNKNOWN
+    (VPTR)                        [[...]+0000] : State vptr (005D8088)
+    (DWORD)                       ([...]+0004) : eRefCounter refCount
+    (BOOL)                        ([...]+0008) : isDefault
+    (BOOL)                        ([...]+0009) : isTerminal
+    (eString)                     ([...]+000C) : state name
+    (eRef<State>)                 [[...]+0010] : owner state
+    (eArray<eRef<State>>)         ([...]+0014) : subStates
+    (eRef<eState>)                [[...]+0020] : default state (linking to active state until not NULL)
+    (eArray<eRef<StringSection>>) ([...]+0024) : string sections
+    (eArray<eRef<Property>>)      ([...]+0030) : properties
+    (eRef<VoidInstruction>)       ([...]+003C) : enter instructions
+    (eRef<VoidInstruction>)       ([...]+0040) : update instructions
+    (eRef<VoidInstruction>)       ([...]+0044) : leave instructions
+    (eArray<eRef<When>>)          ([...]+0048) : whens
+    (eArray<eRef<Gadget>>)        ([...]+0054) : gadgets
+    (eArray<eRef<NodeRef>>)       ([...]+0060) : nodeRefs
+    (eString)                     ([...]+006C) : track (animation) name
+    (DWORD)                       [[...]+0070] : UNKNOWN
+    (eString)                     ([...]+0074) : UNKNOWN
 
     ------------------------------------------------
-    -- eObject::eRefCounter::State::Namespace
-    -- size: 0x84 (132) bytes
+    -- Namespace class
+    -- ( eRefCounter :: State :: Namespace )
+    -- size: 0x0084 (132) bytes
 
-    (VPTR)        [[...]+0000] : Namespace vptr (005D85D4)
+    (VPTR)            [[...]+0000] : Namespace vptr (005D85D4)
     // (...)
-    (Namespace *) [[[...]+0078] : extended (parent) script
-    (eString *)   [[[...]+007C] : script path duplicate
-    (BOOL)        ([[...]+0080) : isPersistent
+    (eRef<Namespace>) [[[...]+0078] : extended (parent) script
+    (eString)         ([[...]+007C) : script path duplicate
+    (BOOL)            ([[...]+0080) : isPersistent
 
     ------------------------------------------------
-    -- eObject::eRefCounter::Gadget (abstract class)
-    -- size: 0x10 (16) bytes
+    -- Gadget abstract class
+    -- ( eRefCounter :: Gadget )
+    -- size: 0x0010 (16) bytes
 
-    (VPTR)      [[...]+0000] : Gadget vptr (005D80C0)
-    (DWORD)     ([...]+0004) : eRefCounter refCount
-    (Actor *)   [[...]+0008] : Gadget's owner
-    (eString *) [[...]+000C] : Gadget's local name
-
-    ------------------------------------------------
-    -- eObject::eRefCounter::eNode
-    -- size: 0x3C (60) bytes
-
-    (VPTR)           [[...]+0000] : eNode vptr (005D08B0)
-    (DWORD)          ([...]+0004) : eRefCounter refCount
-    (eTransform *)   [[...]+0008] : last xform (required for TriMeshes with modifiers)
-    (DWORD)          ([...]+000C) : UNKNOWN
-    (eGroup *)       [[...]+0010] : parent node
-    (eString *)      [[...]+0014] : node name
-    (eALBox *)       [[...]+0018] : axis list box (for TriMeshes with collision)
-    (DWORD)          ([...]+001C) : node flags
-    (ePoint4)        ([...]+0020) : sphere boundary (unused)
-    (WORD)           ([...]+0030) : collision response flags
-    (eCtrl<float> *) [[...]+0034] : visCtrl (timeline for alpha blending factor)
-    (FLOAT)          ([...]+0038) : visRate (default: `1.0f`)
+    (VPTR)        [[...]+0000] : Gadget vptr (005D80C0)
+    (DWORD)       ([...]+0004) : eRefCounter refCount
+    (eRef<Actor>) [[...]+0008] : Gadget's owner
+    (eString)     ([...]+000C) : Gadget's local name
 
     ------------------------------------------------
-    -- eObject::eRefCounter::eNode::eGroup
-    -- size: 0x44 (68) bytes
+    -- Timer class
+    -- ( eRefCounter :: Gadget :: Timer )
+    -- size: 0x0018 (16) bytes
 
-    (VPTR)     [[...]+0000] : eGroup vptr (005D0F88)
+    (VPTR)    [[...]+0000] : Timer vptr (005D84C0)
     // (...)
-    (eArray)   ([...]+003C) : children nodes
-      (DWORD)    ([...]+003C) : count
-      (DWORD)    ([...]+0040) : maxSize
-      (eNode **) [[...]+0044] : children nodes
+    (eString) ([...]+000C) : (default: "timer")
+    (BOOL)    ([...]+0010) : enabled (default: TRUE)
+    (FLOAT)   ([...]+0014) : elapsed (default: `0`)
 
     ------------------------------------------------
-    -- eObject::eRefCounter::eNode::eGroup::eTransform (xform)
-    -- size: 0xAC (172) bytes
+    -- eTextWriterFields2 class
+    -- ( eRefCounter :: Gadget :: eTextWriterFields2 )
+    -- size: 0x0034 (52) bytes
 
-    (VPTR)          [[...]+0000] : eTransform vptr (005D0B60)
+    (VPTR)    [[...]+0000] : eTextWriterFields2 vptr (005D5320)
     // (...)
-    (eSRP)          ([...]+0048) : current (local) transformation
-    (eSRP)          ([...]+0068) : world (local on parent) transformation
-    (eSRP)          ([...]+0088) : temporary transformation
-    (eCtrl<eSRP> *) [[...]+00A8] : animation controler (timelines of SRP keyframes)
+    (eRef<eGeometry>) [[...]+0010] : UNKNOWN
+    (eRef<eGeometry>) [[...]+0014] : UNKNOWN
+    (FLOAT)           ([...]+0018) : topMargin (default: `300.0`)
+    (FLOAT)           ([...]+001C) : leftMargin (default: `50.0`)
+    (FLOAT)           ([...]+0020) : textSize (default: `0.5`)
+    (FLOAT)           ([...]+0024) : lineSpacing (default: `30.0`)
+    (BOOL)            ([...]+0028) : useIcon (default: FALSE)
+    (VOID *)          ([...]+002C) : UNKNOWN (default: NULL)
+    (eString)         ([...]+0030) : iconTexName (default: "menu/interfejs3/celownik.tga")
 
     ------------------------------------------------
-    -- eObject::eRefCounter::eNode::eGroup::eTransform::ePivot
+    -- eTimerGadget class
+    -- ( eRefCounter :: Gadget :: eTextWriterFields2 :: eTimerGadget )
+    -- size: 0x0058 (86) bytes
+
+    (VPTR)    [[...]+0000] : eTimerGadget vptr (005D5370)
+    // (...)
+    (FLOAT)   ([...]+0034) : sceneTimestamp (scene time when timing began, default: `0`)
+    (FLOAT)   ([...]+0038) : elapsed (default: `0`)
+    (BOOL)    ([...]+003C) : timing (default: FALSE)
+    (FLOAT)   ([...]+0040) : initialTimeFrames (set on init after parsing properties)
+    (FLOAT)   ([...]+0044) : initialTimeSec (default: `0`)
+    (BOOL)    ([...]+0048) : inverse (default: FALSE)
+    (BOOL)    ([...]+0049) : visible (default: FALSE)
+    (BOOL)    ([...]+004A) : allowRecord (default: TRUE)
+    (BOOL)    ([...]+004B) : recordBroken (default: FALSE)
+    (BOOL)    ([...]+004C) : UNKNOWN (default: FALSE)
+    (UNKNOWN) ([...]+0050) : UNKNOWN
+    (eString) ([...]+0054) : UNKNOWN
+
+    ------------------------------------------------
+    -- eNode class
+    -- ( eRefCounter :: eNode )
+    -- size: 0x003C (60) bytes
+
+    (VPTR)               [[...]+0000] : eNode vptr (005D08B0)
+    (DWORD)              ([...]+0004) : eRefCounter refCount
+    (eRef<eTransform>)   [[...]+0008] : last xform
+                                         (required for TriMeshes with modifiers)
+    (DWORD)              ([...]+000C) : UNKNOWN
+    (eRef<eGroup>)       [[...]+0010] : parent node
+    (eString)            ([...]+0014) : node name
+    (eRef<eALBox>)       [[...]+0018] : axis list box
+                                         (for TriMeshes with collision)
+    (DWORD)              ([...]+001C) : node flags
+    (ePoint4)            ([...]+0020) : sphere boundary (unused)
+    (WORD)               ([...]+0030) : collision response flags
+    (eRef<eCtrl<float>>) [[...]+0034] : visCtrl (timeline for alpha blending factor)
+    (FLOAT)              ([...]+0038) : visRate (default: `1.0f`)
+
+    ------------------------------------------------
+    -- eGeometry abstract class
+    -- ( eRefCounter :: eNode )
+    -- size: 0x0058 (88) bytes
+
+    (VPTR)            [[...]+0000] : eGeometry vptr (005D0678)
+    // (...)
+    (eRef<eMaterial>) [[...]+003C] : material
+    (ePoint3)         ([...]+0040) : boxBoundMin
+    (ePoint3)         ([...]+004C) : boxBoundMax
+
+    ------------------------------------------------
+    -- eTextField class
+    -- ( eRefCounter :: eNode :: eGeometry )
+    -- size: 0x00C0 (192) bytes
+
+    (VPTR)             [[...]+0000] : eTextField vptr (005D6328)
+    // (...)
+    (FLOAT)            [[...]+0058] : scale (default: `1.0`)
+    (DWORD)            [[...]+005C] : UNKNOWN
+    (eRef<eFont>)      [[...]+0060] : global font
+    (eArray<eMatrix4>) [[...]+0064] : UNKNOWN
+    (eArray<eMatrix4>) [[...]+0070] : UNKNOWN
+    (eArray<eMatrix4>) [[...]+007C] : UNKNOWN
+    (eArray<eMatrix4>) [[...]+0088] : UNKNOWN
+    (eArray<eMatrix4>) [[...]+0094] : UNKNOWN
+    (eArray<eMatrix4>) [[...]+00A0] : UNKNOWN
+    (VOID)             [[...]+00AC] : UNKNOWN (default: NULL)
+    (FLOAT)            [[...]+00B0] : x (default: `0`)
+    (FLOAT)            [[...]+00B4] : y (default: `0`)
+    (DWORD)            [[...]+00B8] : UNKNOWN (default: `1`)
+    (VOID)             [[...]+00BC] : UNKNOWN (default: NULL)
+
+    ------------------------------------------------
+    -- eGroup class
+    -- ( eRefCounter :: eNode :: eGroup )
+    -- size: 0x0044 (68) bytes
+
+    (VPTR)                [[...]+0000] : eGroup vptr (005D0F88)
+    // (...)
+    (eArray<eRef<eNode>>) ([...]+003C) : children nodes
+
+    ------------------------------------------------
+    -- eTransform class
+    -- ( eRefCounter :: eNode :: eGroup :: eTransform )
+    -- size: 0x00AC (172) bytes
+
+    (VPTR)              [[...]+0000] : eTransform vptr (005D0B60)
+    // (...)
+    (eSRP)              ([...]+0048) : current (local) transformation
+    (eSRP)              ([...]+0068) : world (local on parent) transformation
+    (eSRP)              ([...]+0088) : temporary transformation
+    (eRef<eCtrl<eSRP>>) [[...]+00A8] : animation controler
+                                        (timelines of SRP keyframes)
+
+    ------------------------------------------------
+    -- ePivot class
+    -- ( eRefCounter :: eNode :: eGroup :: eTransform :: ePivot )
     -- size: 0x0114 (276) bytes
 
-    (VPTR)     [[...]+0000] : ePivot vptr (005D1140)
+    (VPTR)              [[...]+0000] : ePivot vptr (005D1140)
     // (...)
-    (eAnimate) ([...]+00AC) : structure for animations, holding anim tracks and anim states
-    (eArray)   ([...]+00E8) : UNKNOWN
-    (eSRP)     ([...]+00F4) : original transformation (first loaded from xform, then applied in updates)
+    (eAnimate)          ([...]+00AC) : structure for animations (tracks and state)
+    (eArray<eRef<???>>) ([...]+00E8) : UNKNOWN
+    (eSRP)              ([...]+00F4) : original transformation
+                                        (first loaded from xform, then applied in updates)
 
     ------------------------------------------------
-    -- eObject::eRefCounter::eNode::eGroup::eTransform::ePivot::Actor
+    -- Actor class
+    -- ( eRefCounter :: eNode :: eGroup :: eTransform :: ePivot :: Actor )
     -- size: 0x0120 (288) bytes
 
-    (VPTR)        [[...]+0000] : Actor vptr (005D7530)
+    (VPTR)            [[...]+0000] : Actor vptr (005D7530)
     // (...)
-    (Namespace *) [[...]+0114] : Actor's script
-    (eString *)   [[...]+0118] : original script filepath
-    (VOID)        [[...]+011C] : UNKNOWN
+    (eRef<Namespace>) [[...]+0114] : Actor's script
+    (eString)         ([...]+0118) : original script filepath
+    (VOID)            [[...]+011C] : UNKNOWN
 
     ------------------------------------------------
     -- eKao2Gamelet class
+    -- ( eObject :: eKao2Gamelet )
     // size: 0x3110 (12 560) bytes
     // <kao2.00404260> : constructor
 
-    (VPTR)            [[...]+0000] : eKao2Gamelet vptr (005CD504)
-    (eGameCamera *)   [[...]+0004] : "$observer"
-    (eDrawContext *)  [[...]+0008] : draw context (base: eRefCounter)
-    (eScene *)        [[...]+000C] : "$root" (current level scene)
-    (FLOAT)           ([...]+0010) : AnimSpeed (default: `1.0f`)
-    (WORD)            ([...]+0014) : UNKNOWN (`00 00`)
-    (eArray)          ([...]+0018) : textWriters
-      (DWORD)           ([...]+0018) : count
-      (DWORD)           ([...]+001C) : maxSize
-      (eTextWriter **)  ([...]+0020) : textWriters
-    (FLOAT)           ([...]+0024) : nearPlane ?
-    (FLOAT)           ([...]+0028) : farPlane ?
-    (FLOAT)           ([...]+002C) : UNKNOWN
-    (DWORD)           ([...]+0030) : UNKNOWN
-    (FLOAT)           ([...]+0034) : UNKNOWN
-    (FLOAT)           ([...]+0038) : UNKNOWN
-    (VOID)            ([...]+003C) : `BAADF00D`
+    (VPTR)                      [[...]+0000] : eKao2Gamelet vptr (005CD504)
+    (eRef<eGameCamera>)         [[...]+0004] : "$observer"
+    (eRef<eDrawContext>)        [[...]+0008] : draw context (base: eRefCounter)
+    (eRef<eScene>)              [[...]+000C] : "$root" (current level scene)
+    (FLOAT)                     ([...]+0010) : AnimSpeed (default: `1.0f`)
+    (WORD)                      ([...]+0014) : UNKNOWN (`00 00`)
+    (eArray<eRef<eTextWriter>>) ([...]+0018) : textWriters
+    (FLOAT)                     ([...]+0024) : nearPlane ?
+    (FLOAT)                     ([...]+0028) : farPlane ?
+    (FLOAT)                     ([...]+002C) : UNKNOWN
+    (DWORD)                     ([...]+0030) : UNKNOWN
+    (FLOAT)                     ([...]+0034) : UNKNOWN
+    (FLOAT)                     ([...]+0038) : UNKNOWN
+    (VOID)                      ([...]+003C) : `BAADF00D`
     // (...) `BAADF00D`
-    (DWORD)           ([...]+035C) : UNKNOWN
-    (FLOAT)           ([...]+0360) : total scene (last respawn) time in seconds
-    (FLOAT)           ([...]+0364) : last update delta time in seconds (goes unused...)
-    (DWORD)           ([...]+0368) : UNKNOWN
-    (DWORD)           ([...]+036C) : UNKNOWN
-    (DWORD)           ([...]+0370) : UNKNOWN
-    (DWORD)           ([...]+0374) : UNKNOWN
-    (DWORD)           ([...]+0378) : UNKNOWN
-    (BOOL)            ([...]+037C) : UNKNOWN
-    (DWORD)           ([...]+0380) : number of scene updates to run while in paused mode
-    (BOOL)            ([...]+0384) : isGameplayPaused (TRUE when in menu)
-    (DWORD)           ([...]+0388) : UNKNOWN
-    (Actor *)         ([...]+038C) : "$hero" (is also attached to "$root")
-    (eString *)       ([...]+0390) : current level AR name
-    (eFont *)         ([...]+0394) : one and only, font (base: eMaterial)
-    (eString *)       ([...]+0398) : first checkpoint name
-    (DWORD)           ([...]+039C) : UNKNOWN
-    (Actor *)         ([...]+03A0) : last checkpoint object (can be NULL)
+    (DWORD)                     ([...]+035C) : UNKNOWN
+    (FLOAT)                     ([...]+0360) : total scene time in seconds
+                                               (from the beginning of the scene OR from last respawn)
+    (FLOAT)                     ([...]+0364) : last update delta time in seconds
+                                                (goes unused...)
+    (DWORD)                     ([...]+0368) : UNKNOWN
+    (DWORD)                     ([...]+036C) : UNKNOWN
+    (DWORD)                     ([...]+0370) : UNKNOWN
+    (DWORD)                     ([...]+0374) : UNKNOWN
+    (DWORD)                     ([...]+0378) : UNKNOWN
+    (BOOL)                      ([...]+037C) : UNKNOWN
+    (DWORD)                     ([...]+0380) : number of scene updates to run while in paused mode
+    (BOOL)                      ([...]+0384) : isGameplayPaused
+                                                (TRUE when in menu, but does not necessarily mean that menu is open)
+    (DWORD)                     ([...]+0388) : UNKNOWN
+    (eRef<Actor>)               [[...]+038C] : "$hero" (Hero is also attached to "$root" scene)
+    (eString)                   ([...]+0390) : current level AR name
+    (eRef<eFont>)               [[...]+0394] : one and only, font (base: eMaterial)
+    (eString)                   ([...]+0398) : first checkpoint name (should be "kao01")
+    (DWORD)                     ([...]+039C) : UNKNOWN
+    (eRef<Actor>)               [[...]+03A0] : last checkpoint object (can be NULL)
     // (...) UNKNOWN
-    (BYTE)            ([...]+03F4) : `02` reincarnates Kao (restarts from last checkpoint)
-    (VPTR)            [[...]+03F8] : UNKNOWN (vptr: 005CD500)
-    (VPTR)            [[...]+03FC] : UNKNOWN (vptr: 005CD4FC)
-    (VPTR)            [[...]+0400] : UNKNOWN (vptr: 005CD4F8)
-    (DWORD)           ([...]+0404) : UNKNOWN
-    (DWORD)           ([...]+0408) : UNKNOWN
-    (BOOL)            ([...]+040C) : UNKNOWN
-    (DWORD)           ([...]+0410) : UNKNOWN
-    (BOOL)            ([...]+0414) : UNKNOWN
-    (DWORD)           ([...]+0418) : UNKNOWN
-    (eString *)       ([...]+041C) : UNKNOWN
-    (WORD)            ([...]+0420) : UNKNOWN
-    (eString *)       ([...]+0424) : UNKNOWN
-    (eOrtho2D *)      ([...]+0428) : unnamed Ortho2D (base: eGroup)
-    (eMenu *)         ([...]+042C) : one and only, menu (base: eGroup)
-    (eMenuItemGroup)  ([...]+0430) : Main Menu options
-    (eMenuItemGroup)  ([...]+0460) : "Choose level" options (+ "Powrót")
-    (eMenuItemGroup)  ([...]+0490) : "Choose bonus level" options (+ "Powrót")
-    (eMenuItemGroup)  ([...]+04C0) : Empty menu group
-    (eMenuItemGroup)  ([...]+04F0) : "Autorzy" options (+ "Powrót")
-    (eMenuItem)       ([...]+0520)
-      (eString *)       [[...]+0520] : "Choose level"
-    (eMenuItem)       ([...]+0564)
-      (eString *)       [[...]+0564] : "Choose bonus level"
-    (eMenuItem)       ([...]+05A8)
-      (eString *)       [[...]+05A8] : "Default menu"
-    (eMenuItem)       ([...]+05EC)
-      (eString *)       [[...]+05EC] : "Autorzy"
-    (eMenuItem)       ([...]+0630)
-      (eString *)       [[...]+0630] : "Statek" (level_00 lang name)
-    (eMenuItem)       ([...]+0674)
-      (eString *)       [[...]+0674] : "Mroczne Doki" (level_01 lang name)
+    (BYTE)                      ([...]+03F4) : `02` reincarnates Kao (restarts from last checkpoint)
+    (VPTR)                      [[...]+03F8] : UNKNOWN (vptr: 005CD500)
+    (VPTR)                      [[...]+03FC] : UNKNOWN (vptr: 005CD4FC)
+    (VPTR)                      [[...]+0400] : UNKNOWN (vptr: 005CD4F8)
+    (DWORD)                     ([...]+0404) : loadedLevel ID
+                                                (indexed by 1, set when new level starts to load)
+    (DWORD)                     ([...]+0408) : UNKNOWN
+    (BOOL)                      ([...]+040C) : "-loadtest"
+    (DWORD)                     ([...]+0410) : UNKNOWN
+    (BOOL)                      ([...]+0414) : UNKNOWN
+    (DWORD)                     ([...]+0418) : UNKNOWN
+    (eString)                   ([...]+041C) : UNKNOWN
+    (WORD)                      ([...]+0420) : UNKNOWN
+    (eString)                   ([...]+0424) : UNKNOWN
+    (eRef<eOrtho2D>)            [[...]+0428] : unnamed Ortho2D (base: eGroup) (only one child node - eMenu - ref to the next field)
+    (eRef<eMenu>)               [[...]+042C] : one and only, menu (base: eGroup)
+    (eMenuItemGroup)            ([...]+0430) : Main Menu options
+    (eMenuItemGroup)            ([...]+0460) : "Choose level" options (+ "Powrót")
+    (eMenuItemGroup)            ([...]+0490) : "Choose bonus level" options (+ "Powrót")
+    (eMenuItemGroup)            ([...]+04C0) : Empty menu group
+    (eMenuItemGroup)            ([...]+04F0) : "Autorzy" options (+ "Powrót")
+    (eMenuItem)                 ([...]+0520)
+      (eString)                   ([...]+0520) : "Choose level"
+    (eMenuItem)                 ([...]+0564)
+      (eString)                   ([...]+0564) : "Choose bonus level"
+    (eMenuItem)                 ([...]+05A8)
+      (eString)                   ([...]+05A8) : "Default menu"
+    (eMenuItem)                 ([...]+05EC)
+      (eString)                   ([...]+05EC) : "Autorzy"
+    (eMenuItem)                 ([...]+0630)
+      (eString)                   ([...]+0630) : "Statek" (level_00 lang name)
+    (eMenuItem)                 ([...]+0674)
+      (eString)                   ([...]+0674) : "Mroczne Doki" (level_01 lang name)
     // (...) levels as menu items (MAX_LEVELS = 32)
-    (eMenuItem)       ([...]+0EF4)
-      (eString *)       [[...]+0EF4] : "Powrót"
-    (eMenuItem)       ([...]+0F38)
-      (eString *)       [[...]+0F38] : "Powrót"
-    (eMenuItem)       ([...]+0F7C)
-      (eString *)       [[...]+0F7C] : "kao2 (c) tate interactive"
-    (eMenuItem)       ([...]+0FC0)
-      (eString *)       [[...]+0FC0] : "www.tate.pl"
-    (eMenuItem)       ([...]+1004)
-      (eString *)       [[...]+1004] : "Nowa gra"
-    (eMenuItem)       ([...]+1048)
-      (eString *)       [[...]+1048] : "Przerwij grę"
-    (eMenuItem)       ([...]+108C)
-      (eString *)       [[...]+108C] : "Restart"
-    (eMenuItem)       ([...]+10D0)
-      (eString *)       [[...]+10D0] : "Reload"
-    (eMenuItem)       ([...]+1114)
-      (eString *)       [[...]+1114] : "Try again"
-    (eMenuItem)       ([...]+1158)
-      (eString *)       [[...]+1158] : "Powrót do portu"
-    (eMenuItem)       ([...]+119C)
-      (eString *)       [[...]+119C] : "Next level"
-    (eMenuItem)       ([...]+11E0)
-      (eString *)       [[...]+11E0] : "QuickSave"
-    (eMenuItem)       ([...]+1224)
-      (eString *)       [[...]+1224] : "Reload scripts"
-    (eMenuItemGroup)  ([...]+1268) : Plots menu options
-    (eMenuItem)       ([...]+1298)
-      (eString *)       [[...]+1298] : "Plots"
-    (eMenuItem)       ([...]+12DC)
-      (eString *)       [[...]+12DC] : "small"
-    (eMenuItem)       ([...]+1320)
-      (eString *)       [[...]+1320] : "large"
-    (eMenuItem)       ([...]+1364)
-      (eString *)       [[...]+1364] : "disable"
-    (eMenuItem)       ([...]+13A8)
-      (eString *)       [[...]+13A8] : "0.  system performance"
-    (eMenuItem)       ([...]+13EC)
-      (eString *)       [[...]+13EC] : "1.  camera - general"
-    (eMenuItem)       ([...]+1430)
-      (eString *)       [[...]+1430] : "2.  qhash"
-    (eMenuItem)       ([...]+1474)
-      (eString *)       [[...]+1474] : "3.  camera and hero velocities"
-    (eMenuItem)       ([...]+14B8)
-      (eString *)       [[...]+14B8] : "4.  camera - path"
-    (eMenuItem)       ([...]+14FC)
-      (eString *)       [[...]+14FC] : "5.  hra interpolator"
-    (eMenuItem)       ([...]+1540)
-      (eString *)       [[...]+1540] : "6.  hero vel and motionVec"
-    (eMenuItem)       ([...]+1584)
-      (eString *)       [[...]+1584] : "7.  x"
-    (eMenuItem)       ([...]+15C8)
-      (eString *)       [[...]+15C8] : "8.  camera and hero positions"
-    (eMenuItem)       ([...]+160C)
-      (eString *)       [[...]+160C] : "9.  tea performance"
-    (eMenuItem)       ([...]+1650)
-      (eString *)       [[...]+1650] : "10. isectActions"
-    (eMenuItem)       ([...]+1694)
-      (eString *)       [[...]+1694] : "11. pos camera vs center"
-    (eMenuItem)       ([...]+16D8)
-      (eString *)       [[...]+16D8] : "12. vel camera vs center"
-    (eMenuItem)       ([...]+171C)
-      (eString *)       [[...]+171C] : "mpa"
-    (eSaveMenuGroup)  ([...]+1760) : Load game menu options
-    (eSaveMenuGroup)  ([...]+17B0) : Save game menu options
-    (eMenuItem)       ([...]+1800)
-      (eString *)       [[...]+1800] : "Załaduj grę"
-    (eMenuItem)       ([...]+1844)
-      (eString *)       [[...]+1844] : "Zapisz grę"
-    (eMenuItem)       ([...]+1888)
-      (eString *)       [[...]+1888] : LOAD GAME, SLOT 0/6
-    (eMenuItem)       ([...]+18CC)
-      (eString *)       [[...]+18CC] : LOAD GAME, SLOT 1/6
-    (eMenuItem)       ([...]+1910)
-      (eString *)       [[...]+1910] : LOAD GAME, SLOT 2/6
-    (eMenuItem)       ([...]+1954)
-      (eString *)       [[...]+1954] : LOAD GAME, SLOT 3/6
-    (eMenuItem)       ([...]+1998)
-      (eString *)       [[...]+1998] : LOAD GAME, SLOT 4/6
-    (eMenuItem)       ([...]+19DC)
-      (eString *)       [[...]+19DC] : LOAD GAME, SLOT 5/6
-    (eMenuItem)       ([...]+1A20)
-      (eString *)       [[...]+1A20] : SAVE GAME, SLOT 0/6
-    (eMenuItem)       ([...]+1A64)
-      (eString *)       [[...]+1A64] : SAVE GAME, SLOT 1/6
-    (eMenuItem)       ([...]+1AA8)
-      (eString *)       [[...]+1AA8] : SAVE GAME, SLOT 2/6
-    (eMenuItem)       ([...]+1AEC)
-      (eString *)       [[...]+1AEC] : SAVE GAME, SLOT 3/6
-    (eMenuItem)       ([...]+1B30)
-      (eString *)       [[...]+1B30] : SAVE GAME, SLOT 4/6
-    (eMenuItem)       ([...]+1B74)
-      (eString *)       [[...]+1B74] : SAVE GAME, SLOT 5/6
-    (eMenuItem)       ([...]+1BB8)
-      (eString *)       [[...]+1BB8] : "Zapisz grę"
-    (eMenuItem)       ([...]+1BFC)
-      (eString *)       [[...]+1BFC] : "Załaduj grę"
-    (eMenuItem)       ([...]+1C40)
-      (eString *)       [[...]+1C40] : "Opcje"
-    (eMenuItemGroup)   ([...]+1C84) : are_you_sure_load
-    (eMenuItem)       ([...]+1CB4)
-      (eString *)       [[...]+1CB4] : are_you_sure_load
-    (eMenuItem)       ([...]+)1CF8
-      (eString *)       [[...]+1CF8] : "Tak"
-    (eMenuItem)       ([...]+1D3C)
-      (eString *)       [[...]+1D3C] : "Nie"
-    (eMenuItemGroup)  ([...]+1D80) : are_you_sure_overwrite
-    (eMenuItem)       ([...]+1DB0)
-      (eString *)       [[...]+1DB0] : are_you_sure_overwrite
-    (eMenuItem)       ([...]+1DF4)
-      (eString *)       [[...]+1DF4] : "Tak"
-    (eMenuItem)       ([...]+1E38)
-      (eString *)       [[...]+1E38] : "Nie"
-    (e???MenuGroup)   ([...]+1E7C) : Empty menu group
-    (eMenuItemGroup)  ([...]+1EEC) : Options menu group
-    (eMenuItem)       ([...]+1F1C)
-      (eString *)       [[...]+1F1C] : "Opcje"
-    (eMenuItemGroup)  ([...]+1F60) : Empty menu group
-    (eMenuItem)       ([...]+1F90)
-      (eString *)       [[...]+1F90] : "Default menu"
-    (eMenuItemGroup)  ([...]+1FD4) : Empty menu group
-    (eMenuItem)       ([...]+2004)
-      (eString *)       [[...]+2004] : "Default menu"
-    (eMenuItem)       ([...]+2048)
-      (eString *)       [[...]+2048] : "Wyjście"
-    (eMenuItemGroup)  ([...]+208C) : are_you_sure_exit_game
-    (eMenuItem)       ([...]+20BC)
-      (eString *)       [[...]+20BC] : are_you_sure_exit_game
-    (eMenuItem)       ([...]+2100)
-      (eString *)       [[...]+2100] : "Tak"
-    (eMenuItem)       ([...]+2144)
-      (eString *)       [[...]+2144] : "Nie"
-    (eMenuItemGroup)  ([...]+2188) : are_you_sure_exit_game
-    (eMenuItem)       ([...]+21B8)
-      (eString *)       [[...]+21B8] : "Nie"
-    (eMenuItem)       ([...]+21FC)
-      (eString *)       [[...]+21FC] : "Tak"
-    (eMenuItem)       ([...]+2240)
-      (eString *)       [[...]+2240] : are_you_sure_exit_game
-    (eMenuItemGroup)  ([...]+2284) : are_you_sure_back_to_hub
-    (eMenuItem)       ([...]+22B4)
-      (eString *)       [[...]+22B4] : are_you_sure_back_to_hub
-    (eMenuItem)       ([...]+22F8)
-      (eString *)       [[...]+22F8] : "Tak"
-    (eMenuItem)       ([...]+233C)
-      (eString *)       [[...]+233C] : "Nie"
-    (e???MenuGroup)   ([...]+2380) : controls menu, empty strings
-    (eMenuItem)       ([...]+23B8)
-      (eString *)       [[...]+23B8] : "Sterowanie"
-    (eMenuItem)       ([...]+23FC)
-      (eString *)       [[...]+23FC] : "Akceptuj"
-    (eMenuItem)       ([...]+2440)
-      (eString *)       [[...]+2440] : "Anuluj"
-    (eMenuItem)       ([...]+2484)
-      (eString *)       [[...]+2484] : "Przywróć ustawienia domyślne"
-    (eMenuItem)       ([...]+24C8)
-      (eString *)       [[...]+24C8] : "Akceptuj"
-    (eMenuItem)       ([...]+250C)
-      (eString *)       [[...]+250C] : "Anuluj"
-    (e???MenuGroup)   ([...]+2550) : Empty menu group
-      (eString *)       ([...]+258C) : "SKOK / AKCJA"
-    (eMenuItem)       ([...]+259C)
-      (eString *)       [[...]+259C] : ""
-    (e???MenuGroup)   ([...]+25E0) : Empty menu group
-      (eString *)       ([...]+261C) : "ATAK"
-    (eMenuItem)       ([...]+262C)
-      (eString *)       [[...]+262C] : ""
-    (e???MenuGroup)   ([...]+2670) : Empty menu group
-      (eString *)       ([...]+26AC) : "TOCZENIE"
-    (eMenuItem)       ([...]+26BC)
-      (eString *)       [[...]+26BC] : ""
-    (e???MenuGroup)   ([...]+2700) : Empty menu group
-      (eString *)       ([...]+273C) : "RZUT"
-    (eMenuItem)       ([...]+274C)
-      (eString *)       [[...]+274C] : ""
-    (e???MenuGroup)   ([...]+2790) : Empty menu group
-      (eString *)       ([...]+27CC) : "CELOWANIE"
-    (eMenuItem)       ([...]+27DC)
-      (eString *)       [[...]+27DC] : ""
-    (e???MenuGroup)   ([...]+2820) : Empty menu group
-      (eString *)       ([...]+285C) : "ROZGLĄDANIE"
-    (eMenuItem)       ([...]+286C)
-      (eString *)       [[...]+286C] : ""
-    (e???MenuGroup)   ([...]+28B0) : Empty menu group
-      (eString *)       ([...]+28EC) : "POWRÓT KAMERY"
-    (eMenuItem)       ([...]+28FC)
-      (eString *)       [[...]+28FC] : ""
-    (e???MenuGroup)   ([...]+2940) : Empty menu group
-      (eString *)       ([...]+297C) : "W PRZÓD"
-    (eMenuItem)       ([...]+298C)
-      (eString *)       [[...]+298C] : ""
-    (e???MenuGroup)   ([...]+29D0) : Empty menu group
-      (eString *)       ([...]+2A0C) : "DO TYŁU"
-    (eMenuItem)       ([...]+2A1C)
-      (eString *)       [[...]+2A1C] : ""
-    (e???MenuGroup)   ([...]+2A60) : Empty menu group
-      (eString *)       ([...]+2A9C) : "W LEWO"
-    (eMenuItem)       ([...]+2AAC)
-      (eString *)       [[...]+2AAC] : ""
-    (e???MenuGroup)   ([...]+2AF0) : Empty menu group
-      (eString *)       ([...]+2B2C) : "W PRAWO"
-    (eMenuItem)       ([...]+2B3C)
-      (eString *)       [[...]+2B3C] : ""
-    (e???MenuGroup)   ([...]+2B80) : Empty menu group
-      (eString *)       ([...]+2BBC) : "KAMERA DO GÓRY"
-    (eMenuItem)       ([...]+2BCC)
-      (eString *)       [[...]+2BCC] : ""
-    (e???MenuGroup)   ([...]+2C10) : Empty menu group
-      (eString *)       ([...]+2C4C) : "KAMERA W DÓŁ"
-    (eMenuItem)       ([...]+2C5C)
-      (eString *)       [[...]+2C5C] : ""
-    (e???MenuGroup)   ([...]+2CA0) : Empty menu group
-      (eString *)       ([...]+2CDC) : "KAMERA W LEWO"
-    (eMenuItem)       ([...]+2CEC)
-      (eString *)       [[...]+2CEC] : ""
-    (e???MenuGroup)   ([...]+2D30) : Empty menu group
-      (eString *)       ([...]+2D6C) : "KAMERA W PRAWO"
-    (eMenuItem)       ([...]+2D7C)
-      (eString *)       [[...]+2D7C] : ""
-    (eMenuItem)       ([...]+2DC0)
-      (eString *)       [[...]+2DC0] : "Default menu"
-    (e???MenuGroup)   ([...]+2E04) : Empty menu group
-    (eMenuItem)       ([...]+2E58)
-      (eString *)       [[...]+2E58] : "xxx"
-    (e???MenuGroup)   ([...]+2E9C) : Sound menu group
-      (eString *)       [[...]+2ECC] : "Głośnośc efektów"
-    (eMenuItem)       ([...]+2EF4)
-      (eString *)       [[...]+2EF4] : "xxx"
-    (e???MenuGroup)   ([...]+2F38) : Sound menu group
-      (eString *)       [[...]+2E68] : "Głośnośc muzyki"
-    (eMenuItem)       ([...]+2F90)
-      (eString *)       [[...]+2F90] : "Default menu"
-    (e???MenuGroup)   ([...]+2FD4) : Empty menu group
-    (eMenuItem)       ([...]+303C)
-      (eString *)       [[...]+303C] : "Konfiguracja dźwięku"
-    (eMenuItemGroup)  ([...]+3080) : Sound config menu options
-    (DWORD)           ([...]+30B0) : Game Action Control
-    (DWORD)           ([...]+30B4) : UNKNOWN
-    (DWORD)           ([...]+30B8) : UNKNOWN
-    (WORD)            ([...]+30BC) : UNKNOWN
-    (eString *)       [[...]+30C0] : "userInterface"
-    (eOrtho2D *)      [[...]+30C4] : "OrthoNode"
-    (Actor *)         [[...]+30C8] : "UserInterfaceGadget"
-    (WORD)            ([...]+30CC) : UNKNOWN
-    (eKao2Gamelet *)  [[...]+30D0] : __instance
-    (BOOL)            ([...]+30D4) : UNKNOWN
-    (DWORD)           ([...]+30D8) : UNKNOWN
-    (WORD)            ([...]+30DC) : UNKNOWN
-    (DWORD)           ([...]+30E0) : UNKNOWN
-    (DWORD)           ([...]+30E4) : UNKNOWN
-    (DWORD)           ([...]+30E8) : UNKNOWN
-    (BOOL)            ([...]+30EC) : UNKNOWN
-    (eGroup *)        [[...]+30F0] : "$TextWriterGroup"
-    (BOOL)            ([...]+30F4) : UNKNOWN
-    (DWORD)           ([...]+30F8) : UNKNOWN
-    (DWORD)           ([...]+30FC) : UNKNOWN
-    (DWORD)           ([...]+3100) : UNKNOWN
-    (DWORD)           ([...]+3104) : UNKNOWN
-    (DWORD)           ([...]+3108) : UNKNOWN
-    (DWORD)           ([...]+310C) : UNKNOWN
+    (eMenuItem)                 ([...]+0EF4)
+      (eString)                   ([...]+0EF4) : "Powrót"
+    (eMenuItem)                 ([...]+0F38)
+      (eString)                   ([...]+0F38) : "Powrót"
+    (eMenuItem)                 ([...]+0F7C)
+      (eString)                   ([...]+0F7C) : "kao2 (c) tate interactive"
+    (eMenuItem)                 ([...]+0FC0)
+      (eString)                   ([...]+0FC0) : "www.tate.pl"
+    (eMenuItem)                 ([...]+1004)
+      (eString)                   ([...]+1004) : "Nowa gra"
+    (eMenuItem)                 ([...]+1048)
+      (eString)                   ([...]+1048) : "Przerwij grę"
+    (eMenuItem)                 ([...]+108C)
+      (eString)                   ([...]+108C) : "Restart"
+    (eMenuItem)                 ([...]+10D0)
+      (eString)                   ([...]+10D0) : "Reload"
+    (eMenuItem)                 ([...]+1114)
+      (eString)                   ([...]+1114) : "Try again"
+    (eMenuItem)                 ([...]+1158)
+      (eString)                   ([...]+1158) : "Powrót do portu"
+    (eMenuItem)                 ([...]+119C)
+      (eString)                   ([...]+119C) : "Next level"
+    (eMenuItem)                 ([...]+11E0)
+      (eString)                   ([...]+11E0) : "QuickSave"
+    (eMenuItem)                 ([...]+1224)
+      (eString)                   ([...]+1224) : "Reload scripts"
+    (eMenuItemGroup)            ([...]+1268) : Plots menu options
+    (eMenuItem)                 ([...]+1298)
+      (eString)                   ([...]+1298) : "Plots"
+    (eMenuItem)                 ([...]+12DC)
+      (eString)                   ([...]+12DC) : "small"
+    (eMenuItem)                 ([...]+1320)
+      (eString)                   ([...]+1320) : "large"
+    (eMenuItem)                 ([...]+1364)
+      (eString)                   ([...]+1364) : "disable"
+    (eMenuItem)                 ([...]+13A8)
+      (eString)                   ([...]+13A8) : "0.  system performance"
+    (eMenuItem)                 ([...]+13EC)
+      (eString)                   ([...]+13EC) : "1.  camera - general"
+    (eMenuItem)                 ([...]+1430)
+      (eString)                   ([...]+1430) : "2.  qhash"
+    (eMenuItem)                 ([...]+1474)
+      (eString)                   ([...]+1474) : "3.  camera and hero velocities"
+    (eMenuItem)                 ([...]+14B8)
+      (eString)                   ([...]+14B8) : "4.  camera - path"
+    (eMenuItem)                 ([...]+14FC)
+      (eString)                   ([...]+14FC) : "5.  hra interpolator"
+    (eMenuItem)                 ([...]+1540)
+      (eString)                   ([...]+1540) : "6.  hero vel and motionVec"
+    (eMenuItem)                 ([...]+1584)
+      (eString)                   ([...]+1584) : "7.  x"
+    (eMenuItem)                 ([...]+15C8)
+      (eString)                   ([...]+15C8) : "8.  camera and hero positions"
+    (eMenuItem)                 ([...]+160C)
+      (eString)                   ([...]+160C) : "9.  tea performance"
+    (eMenuItem)                 ([...]+1650)
+      (eString)                   ([...]+1650) : "10. isectActions"
+    (eMenuItem)                 ([...]+1694)
+      (eString)                   ([...]+1694) : "11. pos camera vs center"
+    (eMenuItem)                 ([...]+16D8)
+      (eString)                   ([...]+16D8) : "12. vel camera vs center"
+    (eMenuItem)                 ([...]+171C)
+      (eString)                   ([...]+171C) : "mpa"
+    (eSaveMenuGroup)            ([...]+1760) : Load game menu options
+    (eSaveMenuGroup)            ([...]+17B0) : Save game menu options
+    (eMenuItem)                 ([...]+1800)
+      (eString)                   ([...]+1800) : "Załaduj grę"
+    (eMenuItem)                 ([...]+1844)
+      (eString)                   ([...]+1844) : "Zapisz grę"
+    (eMenuItem)                 ([...]+1888)
+      (eString)                   ([...]+1888] : LOAD GAME, SLOT 0/6
+    (eMenuItem)                 ([...]+18CC)
+      (eString)                   ([...]+18CC] : LOAD GAME, SLOT 1/6
+    (eMenuItem)                 ([...]+1910)
+      (eString)                   ([...]+1910] : LOAD GAME, SLOT 2/6
+    (eMenuItem)                 ([...]+1954)
+      (eString)                   ([...]+1954] : LOAD GAME, SLOT 3/6
+    (eMenuItem)                 ([...]+1998)
+      (eString)                   ([...]+1998] : LOAD GAME, SLOT 4/6
+    (eMenuItem)                 ([...]+19DC)
+      (eString)                   ([...]+19DC] : LOAD GAME, SLOT 5/6
+    (eMenuItem)                 ([...]+1A20)
+      (eString)                   ([...]+1A20] : SAVE GAME, SLOT 0/6
+    (eMenuItem)                 ([...]+1A64)
+      (eString)                   ([...]+1A64] : SAVE GAME, SLOT 1/6
+    (eMenuItem)                 ([...]+1AA8)
+      (eString)                   ([...]+1AA8] : SAVE GAME, SLOT 2/6
+    (eMenuItem)                 ([...]+1AEC)
+      (eString)                   ([...]+1AEC] : SAVE GAME, SLOT 3/6
+    (eMenuItem)                 ([...]+1B30)
+      (eString)                   ([...]+1B30] : SAVE GAME, SLOT 4/6
+    (eMenuItem)                 ([...]+1B74)
+      (eString)                   ([...]+1B74] : SAVE GAME, SLOT 5/6
+    (eMenuItem)                 ([...]+1BB8)
+      (eString)                   ([...]+1BB8) : "Zapisz grę"
+    (eMenuItem)                 ([...]+1BFC)
+      (eString)                   ([...]+1BFC) : "Załaduj grę"
+    (eMenuItem)                 ([...]+1C40)
+      (eString)                   ([...]+1C40) : "Opcje"
+    (eMenuItemGroup)             ([...]+1C84) : are_you_sure_load
+    (eMenuItem)                 ([...]+1CB4)
+      (eString)                   ([...]+1CB4] : are_you_sure_load
+    (eMenuItem)                 ([...]+)1CF8
+      (eString)                   ([...]+1CF8) : "Tak"
+    (eMenuItem)                 ([...]+1D3C)
+      (eString)                   ([...]+1D3C) : "Nie"
+    (eMenuItemGroup)            ([...]+1D80) : are_you_sure_overwrite
+    (eMenuItem)                 ([...]+1DB0)
+      (eString)                   ([...]+1DB0) : are_you_sure_overwrite
+    (eMenuItem)                 ([...]+1DF4)
+      (eString)                   ([...]+1DF4) : "Tak"
+    (eMenuItem)                 ([...]+1E38)
+      (eString)                   ([...]+1E38) : "Nie"
+    (e???MenuGroup)             ([...]+1E7C) : Empty menu group
+    (eMenuItemGroup)            ([...]+1EEC) : Options menu group
+    (eMenuItem)                 ([...]+1F1C)
+      (eString)                   ([...]+1F1C) : "Opcje"
+    (eMenuItemGroup)            ([...]+1F60) : Empty menu group
+    (eMenuItem)                 ([...]+1F90)
+      (eString)                   ([...]+1F90) : "Default menu"
+    (eMenuItemGroup)            ([...]+1FD4) : Empty menu group
+    (eMenuItem)                 ([...]+2004)
+      (eString)                   ([...]+2004) : "Default menu"
+    (eMenuItem)                 ([...]+2048)
+      (eString)                   ([...]+2048) : "Wyjście"
+    (eMenuItemGroup)            ([...]+208C) : are_you_sure_exit_game
+    (eMenuItem)                 ([...]+20BC)
+      (eString)                   ([...]+20BC) : are_you_sure_exit_game
+    (eMenuItem)                 ([...]+2100)
+      (eString)                   ([...]+2100) : "Tak"
+    (eMenuItem)                 ([...]+2144)
+      (eString)                   ([...]+2144) : "Nie"
+    (eMenuItemGroup)            ([...]+2188) : are_you_sure_exit_game
+    (eMenuItem)                 ([...]+21B8)
+      (eString)                   ([...]+21B8) : "Nie"
+    (eMenuItem)                 ([...]+21FC)
+      (eString)                   ([...]+21FC) : "Tak"
+    (eMenuItem)                 ([...]+2240)
+      (eString)                   ([...]+2240) : are_you_sure_exit_game
+    (eMenuItemGroup)            ([...]+2284) : are_you_sure_back_to_hub
+    (eMenuItem)                 ([...]+22B4)
+      (eString)                   ([...]+22B4) : are_you_sure_back_to_hub
+    (eMenuItem)                 ([...]+22F8)
+      (eString)                   ([...]+22F8) : "Tak"
+    (eMenuItem)                 ([...]+233C)
+      (eString)                   ([...]+233C) : "Nie"
+    (e???MenuGroup)             ([...]+2380) : controls menu, empty strings
+    (eMenuItem)                 ([...]+23B8)
+      (eString)                   ([...]+23B8) : "Sterowanie"
+    (eMenuItem)                 ([...]+23FC)
+      (eString)                   ([...]+23FC) : "Akceptuj"
+    (eMenuItem)                 ([...]+2440)
+      (eString)                   ([...]+2440) : "Anuluj"
+    (eMenuItem)                 ([...]+2484)
+      (eString)                   ([...]+2484) : "Przywróć ustawienia domyślne"
+    (eMenuItem)                 ([...]+24C8)
+      (eString)                   ([...]+24C8) : "Akceptuj"
+    (eMenuItem)                 ([...]+250C)
+      (eString)                   ([...]+250C) : "Anuluj"
+    (e???MenuGroup)             ([...]+2550) : Empty menu group
+      (eString)                   ([...]+258C) : "SKOK / AKCJA"
+    (eMenuItem)                 ([...]+259C)
+      (eString)                   ([...]+259C) : ""
+    (e???MenuGroup)             ([...]+25E0) : Empty menu group
+      (eString)                   ([...]+261C) : "ATAK"
+    (eMenuItem)                 ([...]+262C)
+      (eString)                   ([...]+262C) : ""
+    (e???MenuGroup)             ([...]+2670) : Empty menu group
+      (eString)                   ([...]+26AC) : "TOCZENIE"
+    (eMenuItem)                 ([...]+26BC)
+      (eString)                   ([...]+26BC) : ""
+    (e???MenuGroup)             ([...]+2700) : Empty menu group
+      (eString)                   ([...]+273C) : "RZUT"
+    (eMenuItem)                 ([...]+274C)
+      (eString)                   ([...]+274C) : ""
+    (e???MenuGroup)             ([...]+2790) : Empty menu group
+      (eString)                   ([...]+27CC) : "CELOWANIE"
+    (eMenuItem)                 ([...]+27DC)
+      (eString)                   ([...]+27DC) : ""
+    (e???MenuGroup)             ([...]+2820) : Empty menu group
+      (eString)                   ([...]+285C) : "ROZGLĄDANIE"
+    (eMenuItem)                 ([...]+286C)
+      (eString)                   ([...]+286C) : ""
+    (e???MenuGroup)             ([...]+28B0) : Empty menu group
+      (eString)                   ([...]+28EC) : "POWRÓT KAMERY"
+    (eMenuItem)                 ([...]+28FC)
+      (eString)                   ([...]+28FC) : ""
+    (e???MenuGroup)             ([...]+2940) : Empty menu group
+      (eString)                   ([...]+297C) : "W PRZÓD"
+    (eMenuItem)                 ([...]+298C)
+      (eString)                   ([...]+298C) : ""
+    (e???MenuGroup)             ([...]+29D0) : Empty menu group
+      (eString)                   ([...]+2A0C) : "DO TYŁU"
+    (eMenuItem)                 ([...]+2A1C)
+      (eString)                   ([...]+2A1C) : ""
+    (e???MenuGroup)             ([...]+2A60) : Empty menu group
+      (eString)                   ([...]+2A9C) : "W LEWO"
+    (eMenuItem)                 ([...]+2AAC)
+      (eString)                   ([...]+2AAC) : ""
+    (e???MenuGroup)             ([...]+2AF0) : Empty menu group
+      (eString)                   ([...]+2B2C) : "W PRAWO"
+    (eMenuItem)                 ([...]+2B3C)
+      (eString)                   ([...]+2B3C) : ""
+    (e???MenuGroup)             ([...]+2B80) : Empty menu group
+      (eString)                   ([...]+2BBC) : "KAMERA DO GÓRY"
+    (eMenuItem)                 ([...]+2BCC)
+      (eString)                   ([...]+2BCC) : ""
+    (e???MenuGroup)             ([...]+2C10) : Empty menu group
+      (eString)                   ([...]+2C4C) : "KAMERA W DÓŁ"
+    (eMenuItem)                 ([...]+2C5C)
+      (eString)                   ([...]+2C5C) : ""
+    (e???MenuGroup)             ([...]+2CA0) : Empty menu group
+      (eString)                   ([...]+2CDC) : "KAMERA W LEWO"
+    (eMenuItem)                 ([...]+2CEC)
+      (eString)                   ([...]+2CEC) : ""
+    (e???MenuGroup)             ([...]+2D30) : Empty menu group
+      (eString)                   ([...]+2D6C) : "KAMERA W PRAWO"
+    (eMenuItem)                 ([...]+2D7C)
+      (eString)                   ([...]+2D7C) : ""
+    (eMenuItem)                 ([...]+2DC0)
+      (eString)                   ([...]+2DC0) : "Default menu"
+    (e???MenuGroup)             ([...]+2E04) : Empty menu group
+    (eMenuItem)                 ([...]+2E58)
+      (eString)                   ([...]+2E58) : "xxx"
+    (e???MenuGroup)             ([...]+2E9C) : Sound menu group
+      (eString)                   ([...]+2ECC) : "Głośnośc efektów"
+    (eMenuItem)                 ([...]+2EF4)
+      (eString)                   ([...]+2EF4) : "xxx"
+    (e???MenuGroup)             ([...]+2F38) : Sound menu group
+      (eString)                   ([...]+2E68) : "Głośnośc muzyki"
+    (eMenuItem)                 ([...]+2F90)
+      (eString)                   ([...]+2F90) : "Default menu"
+    (e???MenuGroup)             ([...]+2FD4) : Empty menu group
+    (eMenuItem)                 ([...]+303C)
+      (eString)                   ([...]+303C) : "Konfiguracja dźwięku"
+    (eMenuItemGroup)            ([...]+3080) : Sound config menu options
+    (DWORD)                     ([...]+30B0) : Game Action Control
+    (DWORD)                     ([...]+30B4) : UNKNOWN
+    (BOOL)                      ([...]+30B8) : UNKNOWN
+    (BOOL)                      ([...]+30B9) : skip userInterface script loading
+    (WORD)                      ([...]+30BC) : UNKNOWN
+    (eString)                   ([...]+30C0) : "userInterface"
+    (eRef<eOrtho2D>)            [[...]+30C4) : "OrthoNode"
+    (eRef<Actor>)               [[...]+30C8) : "UserInterfaceGadget"
+    (WORD)                      ([...]+30CC) : UNKNOWN
+    (eRef>eKao2Gamelet>)        [[...]+30D0] : __instance
+    (BOOL)                      ([...]+30D4) : UNKNOWN
+    (DWORD)                     ([...]+30D8) : UNKNOWN
+    (WORD)                      ([...]+30DC) : UNKNOWN
+    (DWORD)                     ([...]+30E0) : UNKNOWN
+    (DWORD)                     ([...]+30E4) : UNKNOWN
+    (DWORD)                     ([...]+30E8) : UNKNOWN
+    (BOOL)                      ([...]+30EC) : UNKNOWN
+    (eRef<eGroup>)              [[...]+30F0) : "$TextWriterGroup"
+    (BOOL)                      ([...]+30F4) : UNKNOWN
+    (DWORD)                     ([...]+30F8) : UNKNOWN
+    (DWORD)                     ([...]+30FC) : UNKNOWN
+    (DWORD)                     ([...]+3100) : UNKNOWN
+    (DWORD)                     ([...]+3104) : UNKNOWN
+    (DWORD)                     ([...]+3108) : UNKNOWN
+    (eRef<eMaterial>)           ([...]+310C) : "misc/powerBars/loading_bar.tga"
 
     ------------------------------------------------
 
@@ -571,15 +734,13 @@
     ------------------------------------------------
     -- (0062B7C8 + 0000)
 
-    (eArray)       (0062B7C8) : global levels array
-      (DWORD)        (0062B7C8) : count
-      (DWORD)        (0062B7CC) : maxSize
-      (eLevelDesc *) [0062B7D0] : levels
+    (eArray<eRef<eLevelDesc>>) (0062B7C8) : global levels array
 
     ------------------------------------------------
     -- (0062B7C8 + 000C)
 
     (DWORD) (0062B7D4) : current level ID
+                          (set when new level finishes loading)
 
     ------------------------------------------------
     -- (0062B7C8 + 0010)
@@ -589,10 +750,7 @@
     ------------------------------------------------
     -- (0062B7C8 + 0014)
 
-    (eArray)    (0062B7DC) : global Persistent Actors array
-      (DWORD)     (0062B7DC) : count
-      (DWORD)     (0062B7E0) : maxSize
-      (Actor **)  [0062B7E4] : Persistent Actors from current level
+    (eArray<eRef<Actor>>) (0062B7DC) : global Persistent Actors array
 
     Items to collect (counters and terminal-state booleans) in level
       are updated while saving the game or while exiting the level.
@@ -610,13 +768,13 @@
 
     ------------------------------------------------
     -- (0062B7C8 + 0030)
-    -- size: 0x80 (128) bytes
+    -- size: 0x0080 (128) bytes
 
     (FLOAT[]) (0062B7F8) : 32 current Persistent Floats
 
     ------------------------------------------------
     -- (0062B7C8 + 00B0)
-    -- size: 0x80 (128) bytes
+    -- size: 0x0080 (128) bytes
 
     (FLOAT[]) (0062B878) : 32 Persistent Floats for reset ("-setpf%i=%f")
 
@@ -630,10 +788,22 @@
     ------------------------------------------------
     -- (0062B7C8 + 013C)
 
-    (VOID)      (0062B904) : UNKNOWN
-    (DWORD)     (0062B908) : UNKNOWN
-    (eString *) [0062B90C] : one and only, global empty string
-    (DWORD)     (0062B910) : UNKNOWN
+    (FLOAT)   (0062B904) : global gameplay timer (in seconds)
+
+    (BOOL)    (0062B908) : clear number of collected items (in each level)
+                            when resetting game (default: TRUE)
+
+    (eString) (0062B90C) : cheat code input string
+
+    (DWORD)   (0062B910) : number of frames spent in menu
+
+    ------------------------------------------------
+    -- (0062B7C8 + 014C)
+
+    (BOOL) (0062B914) : "NEXT_LEVEL" cheat (TODO)
+    (BOOL) (0062B915) : "OPEN_ALL_LEVELS" cheat
+
+    (BOOL) (0062B918) : "INFINITE_BOOMERANGS" cheat
 
     ------------------------------------------------
     -- (...) UNKNOWN
@@ -648,28 +818,14 @@
     ------------------------------------------------
     -- (0062B7C8 + 016C)
 
-    (DWORD)      (0062B934) : ePadGadgetSim ClassID (MSVCRT._initterm)
-    (TypeInfo)     (0062B938) : ePadGadgetSim TypeInfo
-      (DWORD)      (0062B938) : ePadGadgetSim ClassID
-      (LPCSTR)     [0062B93C] : "ePadGadgetSim" (name)
-      (TypeInfo *) [0062B940] : ePadGadget TypeInfo (parent Type)
-      (LPVOID)     [0062B944] : UNKNOWN
-      (LPVOID)     [0062B948] : func to create a new ePadGadgetSim instance
-      (LPVOID)     [0062B94C] : enum function for ePadGadgetSim
-      (LPVOID)     [0062B950] : UNKNOWN
+    (DWORD)    (0062B934) : ePadGadgetSim ClassID (MSVCRT._initterm)
+    (TypeInfo) (0062B938) : ePadGadgetSim TypeInfo
 
     ------------------------------------------------
     -- (0062B7C8 + 018C)
 
-    (DWORD)      (0062B954) : ePadGadget ClassID (MSVCRT._initterm)
-    (TypeInfo)     (0062B958) : ePadGadget TypeInfo
-      (DWORD)      (0062B938) : ePadGadget ClassID
-      (LPCSTR)     [0062B95C] : "ePadGadget" (name)
-      (TypeInfo *) [0062B960] : Gadget TypeInfo (parent Type)
-      (LPVOID)     [0062B964] : UNKNOWN
-      (LPVOID)     [0062B968] : func to create a new ePadGadget instance
-      (LPVOID)     [0062B96C] : enum func for ePadGadget
-      (LPVOID)     [0062B970] : UNKNOWN
+    (DWORD)    (0062B954) : ePadGadget ClassID (MSVCRT._initterm)
+    (TypeInfo) (0062B958) : ePadGadget TypeInfo
 
     ------------------------------------------------
     -- (...)
@@ -681,20 +837,58 @@
 == Other useful data in global memory space
 ================================================================
 
-    (DWORD) [0061E6EC] : Cinema Mode `_ActiveCount`
+    (basic_string)      (00607650) : one and only, global empty string
 
-    (Array *)          [0061F138] : dynamically allocated (why...) array for registered TypeInfos
-      (DWORD)            ([0061F138]+00) : count
-      (DWORD)            ([0061F138]+04) : maxSize
-      (const TypeInfo *) [[0061F138]+08] : TypeInfos
+    (LPCSTR)            (00618DFC) : "" (empty text)
 
-    (BOOL) [0062451C] : isLoading
+    (DWORD)             (0061E6EC) : Cinema Mode `_ActiveCount`
 
-    (eKao2Gamelet *) [006267CC] : one and only, Kao2Gamelet (Game Singleton)
+    (DWORD)             (0061F01C) : number of laps in "The Race"
 
-    (BOOL) [0062B915] : "OPEN_ALL_LEVELS" cheat
+    (eArray<...> *)     [0061F138] : dynamically allocated (why...) array of  all registered TypeInfos
+                                      (`eArray<eRef<TypeInfo>>`), required for `eArchive` class.
 
-    (BOOL) [0063D9AC] : isInMenu
+    (eString)           (00624308) : "build/win32/"
+
+    (eString)           (00624310) : "./media/"
+
+    (BOOL)              (0062451C) : isLoading
+
+    (BOOL[])            (006265B0) : debug options (usually rendering-related)
+
+    (eKao2Gamelet *)    [006267CC] : one and only, Kao2Gamelet
+                                      (Game Singleton)
+
+    (eLang)             (00626FD8) : global "eObject :: eLang"
+
+        (eArray<...>)       (00626FE0) : list of all language tags (only one language!)
+
+            struct size: 0x0008 (8) bytes
+            (eString) struct[0000] : tag identifier
+            (eString) struct[0004] : lang text for given tag
+
+    (eArray<...>)       (00627008) : list of "levels/[...]/misc.ini" properties
+
+        struct size: 0x000C (12) bytes
+        (eString) struct[0000] : key
+        (eString) struct[0004] : value
+        (BOOL)    struct[0008] : UNKNOWN
+
+    (eArray<...>)       (00627014) : list of all (in current level context) unique scripts
+
+        struct size: 0x0010 (16) bytes
+        (eString)           struct[0000] : shared resource name (".def" or ".ar")
+        (VOID *)            struct[0004] : `void func(eRefCount ** result, LPCSTR identifier)`
+        (eRef<eRefCounter>) struct[0008] : reference (object could be "Namespace" or "ePointEmiter" or ...)
+        (DWORD)             struct[000C] : number of shares
+
+    (eRef<eScene>)      [00627080] : current level scene
+
+    (eMaterial)         (0063D97C) : empty material
+
+    (BOOL)              (0063D9AC) : isInMenu
+
+    (eArray<eRef<???>>) (0063FEE0) : ambient sounds
 
 
 ================================================================

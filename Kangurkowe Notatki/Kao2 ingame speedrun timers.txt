@@ -1,0 +1,599 @@
+
+================================================================
+== KAO2 ingame speedrun timers
+================================================================
+
+(2021-12-11)
+ * Rozpracowuję klasę `eTimerGadget` (niewidoczny
+  czasomierz w poziomie "Szalona Jazda").
+
+(2021-12-12)
+ * Rezygnuję z używania gadżeta `eTimerGadget`,
+  ponieważ nie zaaktualizuję Aktora w Menu.
+ * Rozpracowuję klasę `eTextField`.
+
+(2021-12-13)
+ * Przygotowuję kod, który generuje timery podczas ładowania poziomu
+  (w momencie kiedy generowane są obiekty `eOrtho2D`) oraz kod do aktualizacji
+  tekstów w timerach (główna pętla gry, która liczy czas w sekundach).
+
+
+================================================================
+== Useful function definitions
+================================================================
+
+    <kao2.00402950>
+    eRefCounter::decRef()
+        ECX:     (eRefCounter)
+        returns: nothing (void func)
+
+    <kao2.0048D700>
+    Switch to Ortho mode (2D view) -- used only when loading
+        Arg01:   (FLOAT) left
+        Arg02:   (FLOAT) right
+        Arg03:   (FLOAT) bottom
+        Arg04:   (FLOAT) tops
+        returns: nothing (void func)
+
+    <kao2.0048D7A0>
+    eDrawContext::setMaterial()
+        ECX:     (eDrawContext) contextual switch
+        Arg01:   (eMaterial *)  material to use
+        Arg02:   (DWORD)        texture ID
+        returns: nothing (void func)
+
+    <kao2.005428B0>
+    eOrtho2D::render() virtual method
+        ( eNode :: eGroup :: eOrtho2D )
+        ([005CD9C0]+003C)
+
+    <kao2.00546C00>
+    eMenu::render() virtual method
+        ( eNode :: eGroup :: eMenu )
+        ([005D60D0]+003C)
+
+    <kao2.005487B0>
+    eFont::drawString()
+        Arg01:  (basic_string) text to display
+        Arg02:  (DWORD) x
+        Arg03:  (DWORD) y
+        Arg04:  (FLOAT) scale (1.0 => text height is 48.0)
+        Arg05:  (BOOL)  (FALSE centers text horizontally)
+        Arg06:  (FLOAT) color Red
+        Arg07:  (FLOAT) color Green
+        Arg08:  (FLOAT) color Blue
+        Arg09:  (FLOAT) (if not 0.0, sets alpha to 0.8)
+        Arg10:  (FLOAT) alpha
+        returns: nothing (void func)
+            Calls `eString::decRef()` on Arg1 when leaving the function!
+
+    <kao2.0054A130>
+    eTextField::setColor
+        ECX:     (eTextField)
+        Arg01:   (FLOAT)      color Red
+        Arg02:   (FLOAT)      color Green
+        Arg03:   (FLOAT)      color Blue
+        Arg04:   (FLOAT)      color Alpha
+        Arg05:   (DWORD)      UNKNOWN (proposed: `-1`)
+        returns: nothing (void func)
+
+    <kao2.00549F90>
+    eTextField::setText
+        ECX:     (eTextField)
+        Arg01:   (LPCSTR)     text to draw
+        Arg02:   (BOOL)       italic
+        returns: nothing (void func)
+
+    <kao2.00478E00>
+    eGroup::appendChild()
+        ECX:     (eGroup)
+        Arg01:   (eNode) new child node
+        Arg02:   (DWORD) index to place at (proposed: `-1`)
+        returns: nothing (void func)
+            If child node has a valid parent,
+            it will be removed from previous parent!
+
+    <kao2.00408853>
+    Pierwsze wyświetlenie ekranu ładowania, potem generowane są na nowo:
+     - (eOrtho2D) worldOrtho "OrthoNode"
+     - (eOrtho2D) menuOrtho  (bez nazwy)
+     - (eMenu)    menu
+    Podpinane jest `menu` pod `menuOrtho`:
+        00408A63 -- MOV ECX,DWORD PTR DS:[ESI+428]
+        00408A69 -- MOV EAX,DWORD PTR DS:[ESI+42C]
+        00408A6F -- PUSH -1
+        00408A71 -- PUSH EAX
+        00408A72 -- MOV EDX,DWORD PTR DS:[ECX]
+        00408A74 -- CALL DWORD PTR DS:[EDX+70]
+    Potem przygotowywana jest dalsza część poziomu (nearPlane, farPlane, ".COMPILED.", i tak dalej)
+
+    <kao2.004624C0>
+    static eString::vsprintf(eString & result, const char * format, ...)
+        returns: Arg01
+
+    <kao2.0051F080>
+    Statyczna funkcja, konwertuje elapsedFrameTime na tekst "%02d:%02d:%02d"
+        Arg01:           (eString &) (basic_string *) result
+        Arg02:           (FLOAT)     frame time (NOT seconds! Will be miltiplied by `CONST 1/30.`)
+        returns: Arg01
+
+
+================================================================
+== Main Game Loop and updating Gameplay Time (used for save games)
+================================================================
+
+    GLUT display callback
+
+    004903F2 -- MOV ECX,DWORD PTR SS:[EBP-4]
+    004903F5 -- PUSH ECX
+    004903F6 -- MOV EDX,DWORD PTR DS:[6267CC]
+    004903FC -- MOV EAX,DWORD PTR DS:[EDX]
+    004903FE -- MOV ECX,DWORD PTR DS:[6267CC]
+    00490404 -- CALL DWORD PTR DS:[EAX+38]
+
+        <kao2.00409A00>
+        ECX  = eKao2Gamelet
+        Arg1 = (FLOAT) delta_time_sec
+
+        00409A4D -- MOV EDI,DWORD PTR SS:[ESP+0C]
+        00409A51 -- PUSH EDI
+        00409A52 -- MOV ECX,ESI
+        00409A54 -- CALL 004C5CC0
+
+            <kao2.004C5CC0>
+            ECX  = eKao2Gamelet
+            Arg1 = (FLOAT) delta_time_sec
+
+            004C5CF0 -- MOV EAX,DWORD PTR SS:[ESP+8]
+            004C5CF4 -- PUSH EAX
+            004C5CF5 -- MOV ECX,ESI
+            004C5CF7 -- CALL 0048C180
+
+                <kao2.0048C180>
+                eKao2Gamelet::tick() // reading inputs, updating the scene, updating menus
+
+        00409AB6 -- PUSH EDI
+        00409AB7 -- MOV ECX,OFFSET 0062B7C8
+        00409ABC -- CALL 004C7A50
+
+            004C7A50
+            ECX  = global struct at 0062B7C8
+            Arg1 = (FLOAT) delta_time_sec
+            (FLOAT) 0062B904 = the gameplay timer
+
+            004C7A50 -- FLD DWORD PTR SS:[ESP+4]
+            004C7A54 -- FADD DWORD PTR DS:[ECX+13C]
+            004C7A5A -- FSTP DWORD PTR DS:[ECX+13C]
+            004C7A60 -- RETN 4
+
+
+================================================================
+== Modyfikacje kodu - tworzenie i aktualizowanie timerów
+== (Timer od rozpoczęcia gry + Timer od rozpoczęcia poziomu)
+================================================================
+== "OllyDbg": "Multiline Ultimate Assembler" plug-in
+================================================================
+
+    ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+    ;; Layout rezerwowanej pamięci:
+    ;;   [eKao2Gamelet + 0040] = (FLOAT) level time
+    ;;   [eKao2Gamelet + 0044] = (eTextField *) game  time field, for menu  ortho
+    ;;   [eKao2Gamelet + 0048] = (eTextField *) level time field, for menu  ortho
+    ;;   [eKao2Gamelet + 004C] = (eTextField *) game  time field, for level ortho
+    ;;   [eKao2Gamelet + 0050] = (eTextField *) level time field, for level ortho
+    ;;   [eKao2Gamelet + 0054] = (basic_string) game  time as basic_string
+    ;;     [eKao2Gamelet + 0060] = (LPSTR) text
+    ;;   [eKao2Gamelet + 0070] = (basic_string) level time as basic_string
+    ;;     [eKao2Gamelet + 007C] = (LPSTR) text
+    ;;   [eKao2Gamelet + 008C] = layout end
+
+    ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+    <00408654..00408659>
+    ;; Level loading, first function
+
+        call 0051ED10  ;; hijacking `eFont::drawString("loading_in_progress")`
+        ;; call SpeedrunTimersDrawOnLoadingScreen
+
+    ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+    <00408A77..00408A7D>
+    ;; Level loading, first function
+
+        jmp 0051EB63  ;; wpraszanie się po wygenerowaniu OrthoNodes dla Gameleta
+        nop
+        ;; jmp SpeedrunTimersPrepare
+
+    ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+    <0040D9E0..0040D9E5>
+    ;; Level loading, second function
+
+        call 0051ED10  ;; hijacking `eFont::drawString("loading_in_progress")`
+        ;; call SpeedrunTimersDrawOnLoadingScreen
+
+    ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+    <0048E370..0048E377>
+    ;; eMatrixStack::end() -- hack: do NOT null the "$observer" in "eDrawContext"
+    ;;  otherwise "eTextFields" throw Access Violation exceptions when rendered from main menu
+
+        ;; MOV DWORD PTR DS:[ESI+6C],0
+        jmp short 0048E377
+
+    ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+    <004C7A5A..004C7A70>
+    ;; Adding delta time to total game time (measured in seconds),
+    ;;  when the game is not paused (not in any menu).
+
+        ;; Call context:
+        ;;   ESI  = eKao2Gamelet
+        ;;   Arg1 = float delta time
+
+        fst dword[ecx+013C]
+        jmp 0051EC30
+        ;; jmp SpeedrunTimersUpdate
+
+    ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+    <0051EB60..0051EB63>
+    ;; eTimerGadget::update()
+
+        retn 4
+
+    ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+    <0051EB63..0051EC30>
+    ;; SpeedrunTimersPrepare
+
+        ;; Jump context:
+        ;;   from 00408A77
+        ;;   ESI = eKao2Gamelet
+        ;;   ECX is discardable
+        ;;   EDX is discardable
+        ;;   EDI is discardable
+
+        push ebx
+        push ebp
+
+        mov ecx,41000000 ;; y =  8.0
+        mov edx,41C00000 ;; y = 24.0
+
+        mov eax,dword[esi+30C4] ;; level ortho
+        push eax
+        push edx ;; level timer, level ortho, y
+        push eax
+        push ecx ;; game  timer, level ortho, y
+
+        mov eax,dword[esi+0428] ;; menu  ortho
+        push eax
+        push edx ;; level timer, menu  ortho, y
+        push eax
+        push ecx ;; game  timer, menu  ortho, y
+
+        mov ebx,04
+        lea ebp,[esi+0044]
+
+      @SpeedrunTimersPrepare__textfields_loop:
+
+        push 00C0
+        call 00461F40 ;; Kao2 malloc() wrapper
+        add esp,04
+
+        ;; pomijamy `inc dword[eax+0004]` -- obiekt będzie usuwany wraz z odpowiadającym rodzicem
+
+        mov dword[ebp],eax
+        add ebp,04
+        mov edi,eax
+
+        push 10 ;; 16 characters
+        mov ecx,eax
+        call 00549BB0 ;; eTextField constructor with preset text capacity
+
+        pop eax
+        mov dword[edi+00B0],43808000 ;; x = 257.0 ((640 - (10.5 * 0.25 * 48)) * 0.5)
+        mov dword[edi+00B4],eax      ;; y = from local list
+        mov dword[edi+0058],3E800000 ;; scale = 0.25
+
+        push FFFFFFFF
+        push 3F000000 ;; a = 0.5
+        push 3F800000 ;; b = 1.0 (255)
+        push 3F800000 ;; g = 1.0 (255)
+        push 3F800000 ;; r = 1.0 (255)
+        mov ecx,edi
+        call 0054A130 ;; eTextField::setColor()
+
+        pop ecx
+        push -1
+        push edi
+        mov eax,dword[ecx]
+        call dword[eax+0070]
+
+        dec ebx
+          jnz short @SpeedrunTimersPrepare__textfields_loop
+
+        ;; spisz czas początku poziomu względem timera całej gry
+
+        mov eax,dword[0062B904]
+        mov dword[esi+0040],eax
+
+        ;; przygotuj dwa puste `basic_string`
+
+        mov al,byte[0062B909]
+        test al,al
+          jnz short @SpeedrunTimersPrepare__return
+
+        mov ebx,02
+        lea edi,[esi+0054]
+
+      @SpeedrunTimersPrepare__strings_loop:
+
+        xor eax,eax
+        inc eax
+        stosd  ;; refCount
+        dec eax
+        stosd  ;; text length
+        inc eax
+        stosd  ;; array length
+        stosb  ;; ""
+
+        add edi,0F
+
+        dec ebx
+          jnz short @SpeedrunTimersPrepare__strings_loop
+
+        ;; powrót do funkcji ładującej poziom
+
+        mov byte[0062B909],01
+
+      @SpeedrunTimersPrepare__return:
+
+        pop ebp
+        pop ebx
+
+        mov al,byte[esi+30B9]
+        jmp 00408A7D
+
+    ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+    <0051EC30..0051ED10>
+    ;; SpeedrunTimersUpdate
+
+        ;; Jump context:
+        ;;   from 004C7A5A
+        ;;   ESI  = eKao2Gamelet
+        ;;   Arg1 = float delta time
+        ;;   ST0  = added total game time
+
+        mov al,byte[0062451C] ;; isLoading
+        test al,al
+          jnz @SpeedrunTimersUpdate_notReady
+
+        mov al,byte[0062B909] ;; moje oznaczenie na poprawność danych
+                              ;;  w sekcji `BAADF00D` w eKao2Gamelet
+        test al,al
+          jz @SpeedrunTimersUpdate_notReady
+
+        push ebx
+        push ebp
+        push edi
+
+        ;; robimy kopię GAME TIME i odliczamy LEVEL TIME
+
+        fld st0
+        fsub dword[esi+0040]
+
+        ;; ustawiam FPU rounding na DOWN
+
+        push ecx
+        fstcw word[esp]
+        mov ax,word[esp]
+        and ax,F7FF
+        or ax,0400
+        mov word[esp+02],ax
+        fldcw word[esp+02]
+
+        ;; obliczamy tekstową reprezentację dla dwóch czasów
+
+        mov ebx,02
+        lea edi,[esi+007C] ;; najpierw na stosie FPU jest LEVEL TIME
+
+      @SpeedrunTimersUpdate__time_to_text_loop:
+
+        ;; miejsce na argumenty do `MSVCRT.vsprintf()`
+
+        sub esp,10    ;; cztery DWORD-y do "hh:mm:ss.xxxx"
+        mov ebp,esp
+        push esp      ;; Arg3: (DWORD *) argptr
+        push 0060745C ;; Arg2: (LPCSTR)  format
+        push edi      ;; Arg1: (LPSTR)   buffer
+
+        ;; konwersja z sekund w FLOAT-cie na "hh:mm:ss.xxxx" w DWORD-ach
+
+        fist dword[ebp+08]
+        mov dword[ebp+0C],461C4000 ;; 10000.0
+        fmul dword[ebp+0C]
+        fistp dword[ebp+0C] ;; znika jedna liczba ze stosu FPU
+
+        mov cx,10000.
+        xor edx,edx
+        mov eax,dword[ebp+0C]
+        div cx
+        and edx,0000FFFF
+        mov dword[ebp+0C],edx ;; reszta z dzielenia jako części dziesiętne sekund
+
+        mov ecx,60.
+        xor edx,edx
+        mov eax,dword[ebp+08]
+        div ecx
+        mov dword[ebp+08],edx ;; reszta z dzielenia przez 60, jako sekundy (ile niepełnych minut)
+
+        xor edx,edx
+        div ecx
+        mov dword[ebp+04],edx ;; reszta z dzielenia przez 60, jako minuty (ile niepełnych godzin)
+        mov dword[ebp+00],eax ;; wynik dzielenia przez 60, jako godziny
+
+        call dword[005CD130]  ;; <&MSVCRT.vsprintf>
+        add esp,1C
+
+        sub edi,1C  ;; pole tekstowe kolejnego stringa
+        dec ebx
+          jnz short @SpeedrunTimersUpdate__time_to_text_loop
+
+        ;; przywracam FPU rounding
+
+        fldcw word[esp]
+        pop ecx
+
+        ;; aktualizacja naszych eTextField-s
+
+        lea eax,[esi+0060]  ;; game  timer as text
+        lea ecx,[esi+007C]  ;; level timer as text
+
+        mov edx,dword[esi+0044]  ;; game  timer textfield in menu  ortho
+        push edx
+        push eax
+
+        mov edx,dword[esi+0048]  ;; level timer textfield in menu  ortho
+        push edx
+        push ecx
+
+        mov edx,dword[esi+004C]  ;; game  timer textfield in level ortho
+        push edx
+        push eax
+
+        mov edx,dword[esi+0050]  ;; level timer textfield in level ortho
+        push edx
+        push ecx
+
+        mov ebx,04
+
+      @SpeedrunTimersUpdate__textfields_loop:
+
+        pop eax
+        pop ecx
+
+        push 0
+        push eax
+        call 00549F90 ;; eTextField::setText()
+
+        dec ebx
+          jnz short @SpeedrunTimersUpdate__textfields_loop
+
+        ;; gotowe :)
+
+        pop edi
+        pop ebp
+        pop ebx
+        retn 4
+
+      @SpeedrunTimersUpdate_notReady:
+
+        fstp st
+        retn 4
+
+    ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+    <0051ED10..0051ED90>
+    ;; SpeedrunTimersDrawOnLoadingScreen
+
+        ;; Call context:
+        ;;   ECX = eFont
+        ;;   ESI = eKao2Gamelet
+        ;;   Args for drawing "loading_in_progress" text (SHIFTED BECAUSE OF RETURN ADDRESS!)
+        ;;   EBX is discardable
+
+        pop ebx
+
+        call 005487B0 ;; eFont::drawString()
+
+        mov al,byte[0062B909] ;; moje oznaczenie na poprawność danych
+                              ;;  w sekcji `BAADF00D` w eKao2Gamelet
+        test al,al
+          jnz @SpeedrunTimersDrawOnLoadingScreen__textsAreValid
+
+        jmp ebx
+
+      @SpeedrunTimersDrawOnLoadingScreen__textsAreValid:
+
+        push edi
+        mov edi,02
+
+        lea eax,[esi+0070]
+        push eax
+        push 18 ;; y = 24
+
+        lea eax,[esi+0054]
+        push eax
+        push 08 ;; y =  8
+
+      @SpeedrunTimersDrawOnLoadingScreen__draw_loop:
+
+        pop eax
+        pop ecx
+
+        push 3F000000 ;; Arg10: (FLOAT) alpha         = 0.5
+        push        0 ;; Arg09: (FLOAT) must be zero
+        push 3F800000 ;; Arg08: (FLOAT) color Blue    = 1.0 (255)
+        push 3F800000 ;; Arg07: (FLOAT) color Green   = 1.0 (255)
+        push 3F800000 ;; Arg06: (FLOAT) color Red     = 1.0 (255)
+        push        1 ;; Arg05: (BOOL)  do not center
+        push 3E800000 ;; Arg04: (FLOAT) scale         = 0.25
+        push   eax    ;; Arg03: (DWORD) y (from local list)
+        push     0101 ;; Arg02: (DWORD) x             = 257
+
+        inc dword[ecx]
+        push   ecx    ;; Arg01: (basic_string) text to display
+
+        mov ecx,dword[esi+0394]
+        call 005487B0 ;; eFont::drawString()
+
+        dec edi
+          jnz short @SpeedrunTimersDrawOnLoadingScreen__draw_loop
+
+        pop edi
+        jmp ebx
+
+    ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+    <00607458..0060749C>
+
+        ;; Ukradnę sobie jeden z debugowych tekstów,
+        ;; żeby wprowadzić swój Format dla `vsprintf`
+
+        "***\0%d:%02d:%02d.%04d\0"
+
+  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+================================================================
+== Końcowe modyfikacje do procesu "kao2.exe" z powyższych hacków
+================================================================
+
+# Level loading
+00408655: B7 66 11
+00408A77: E9 E7 60 11 00 90
+0040D9E1: 2B 13 11
+
+# eMatrixStack, quick fix for Menus with textFields
+0048E370: EB 05
+
+# Gameplay Time update
+004C7A5B: 91
+004C7A60: E9 CB 71 05 00
+
+# eTimerGadget::update()
+0051EB60: C2 04 00
+
+# SpeedrunTimersPrepare
+0051EB63: 53 55 B9 00 00 00 41 BA 00 00 C0 41 8B 86 C4 30 00 00 50 52 50 51 8B 86 28 04 00 00 50 52 50 51 BB 04 00 00 00 8D 6E 44 68 C0 00 00 00 E8 AB 33 F4 FF 83 C4 04 89 45 00 83 C5 04 89 C7 6A 10 89 C1 E8 07 B0 02 00 58 C7 87 B0 00 00 00 00 80 80 43 89 87 B4 00 00 00 C7 47 58 00 00 80 3E 6A FF 68 00 00 00 3F 68 00 00 80 3F 68 00 00 80 3F 68 00 00 80 3F 89 F9 E8 52 B5 02 00 59 6A FF 57 8B 01 FF 50 70 4B 75 A1 A1 04 B9 62 00 89 46 40 A0 09 B9 62 00 84 C0 75 1E BB 02 00 00 00 8D 7E 54 31 C0 40 AB 48 AB 40 AB AA 83 C7 0F 4B 75 F1 C6 05 09 B9 62 00 01 5D 5B 8A 86 B9 30 00 00 E9 57 9E EE FF
+
+# SpeedrunTimersUpdate
+0051EC30: A0 1C 45 62 00 84 C0 0F 85 C5 00 00 00 A0 09 B9 62 00 84 C0 0F 84 B8 00 00 00 53 55 57 D9 C0 D8 66 40 51 D9 3C E4 66 8B 04 E4 66 25 FF F7 66 0D 00 04 66 89 44 E4 02 D9 6C E4 02 BB 02 00 00 00 8D 7E 7C 83 EC 10 89 E5 54 68 5C 74 60 00 57 DB 55 08 C7 45 0C 00 40 1C 46 D8 4D 0C DB 5D 0C 66 B9 10 27 31 D2 8B 45 0C 66 F7 F1 81 E2 FF FF 00 00 89 55 0C B9 3C 00 00 00 31 D2 8B 45 08 F7 F1 89 55 08 31 D2 F7 F1 89 55 04 89 45 00 FF 15 30 D1 5C 00 83 C4 1C 83 EF 1C 4B 75 A7 D9 2C E4 59 8D 46 60 8D 4E 7C 8B 56 44 52 50 8B 56 48 52 51 8B 56 4C 52 50 8B 56 50 52 51 BB 04 00 00 00 58 59 6A 00 50 E8 97 B2 02 00 4B 75 F3 5F 5D 5B C2 04 00 DD D8 C2 04 00
+
+# SpeedrunTimersDrawOnLoadingScreen
+0051ED10: 5B E8 9A 9A 02 00 A0 09 B9 62 00 84 C0 0F 85 02 00 00 00 FF E3 57 BF 02 00 00 00 8D 46 70 50 6A 18 8D 46 54 50 6A 08 58 59 68 00 00 00 3F 6A 00 68 00 00 80 3F 68 00 00 80 3F 68 00 00 80 3F 6A 01 68 00 00 80 3E 50 68 01 01 00 00 FF 01 51 8B 8E 94 03 00 00 E8 46 9A 02 00 4F 75 CA 5F FF E3
+
+
+================================================================
