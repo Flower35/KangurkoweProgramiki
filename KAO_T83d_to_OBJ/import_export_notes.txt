@@ -1,0 +1,74 @@
+
+================================================================
+== Example compilation and usage (in Windows Command Line)
+================================================================
+
+```
+CD PATH_TO_C_SOURCE_FILE
+gcc -std=c99 -Wall -o "KAO_T83d_to_OBJ.exe" "KAO_T83d_to_OBJ.c"
+```
+
+```
+KAO_T83d_to_OBJ.exe
+PATH_TO_EXTRACTED_PAK_FILES\charact\denis.win\output.bin
+PATH_TO_EXTRACTED_PAK_FILES\charact\denis.win\texture.bmp
+c:\tmp\denis_anims
+```
+
+
+================================================================
+== Blender 2.9 import script (one OBJ file per keyframe)
+================================================================
+
+```
+def import_obj_keyframes(path: str, frames: int, repeats: int = 1, clear: bool = True):
+    
+    def insert_kf(o, i):
+        o.keyframe_insert('hide_viewport', frame = i)
+        o.keyframe_insert('hide_render',   frame = i)
+    
+    # Remove all objects if stated so
+    if clear:
+        for obj in bpy.data.objects:
+            bpy.data.objects.remove(obj)
+    
+    # Add empty parent node (easier to manage model after import)
+    bpy.ops.object.empty_add()
+    master = bpy.context.selected_objects[0]
+    
+    # Import all static frames ("000.obj", "001.obj", "002.obj", etc.)
+    for i in range(frames):
+        bpy.ops.import_scene.obj(filepath = f'{path}\\{i:03d}.obj')
+        obj = C.selected_objects[0]
+        obj.parent = master
+        
+        # Update visibility 
+        f_id = i
+        for n in range(repeats):
+            obj.hide_viewport = False
+            obj.hide_render   = False
+            insert_kf(obj, f_id)
+            obj.hide_viewport = True
+            obj.hide_render   = True
+            insert_kf(obj, f_id - 1)
+            insert_kf(obj, f_id + 1)
+            f_id += frames
+    
+    # Update rendering properties
+    s = bpy.context.scene
+    s.render.fps  = 30
+    s.frame_start =  0
+    s.frame_end   = repeats * frames - 1
+```
+
+
+================================================================
+== ImageMagick PNGs to GIF conversion command
+================================================================
+
+```
+magick convert -delay 3 -dispose 2 "INPUT DIRECTORY\*.png" "OUTPUT DIRECTORY\out.gif"
+```
+
+
+================================================================
