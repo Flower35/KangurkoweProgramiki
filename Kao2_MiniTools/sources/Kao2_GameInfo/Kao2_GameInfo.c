@@ -6,26 +6,26 @@
 //   "Kao2_TAS.c". Podgląd na pozycję i stan bohatera,
 //   podgląd na ID aktualnego poziomu, wszystkie zebrane
 //   znajdźki i liczbę wygaszonych aktorów w poziomie.
+// (2022-01-18)
+//  * Added Hero Animation elapsedTime check.
+// (2023-02-05)
+// * (GCC) Usunięte pragmy, poprawione format specifiery.
 ////////////////////////////////////////////////////////////////
 
 ////////////////////////////////////////////////////////////////
 // Libraries
 ////////////////////////////////////////////////////////////////
 
-#define NULL  0  // not C++'s `((void *)0)`, just zero :)
-
 #define _USE_MATH_DEFINES
 #include <math.h>
 
 #include <stdlib.h>
+#include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 #include <Windows.h>
 #include <psapi.h>
-
-#pragma comment (lib,        "USER32.LIB")
-#pragma comment (lib,         "GDI32.LIB")
-#pragma comment (linker, "/subsystem:windows")
 
 ////////////////////////////////////////////////////////////////
 // Const Defines
@@ -50,7 +50,8 @@
 #define KAO2_WINDOW_CLASSNAME  "GLUT"
 #define KAO2_WINDOW_NAME       "kangurek Kao: 2ga runda"
 
-const char * KAO2_EXECUTABLE_NAMES[2] =
+const char *
+KAO2_EXECUTABLE_NAMES[2] =
 {
     "kao2.exe", "kao2_mod.exe"
 };
@@ -77,13 +78,27 @@ const char * KAO2_EXECUTABLE_NAMES[2] =
 #define KAO2_SRP_POS    0x0010
 #define KAO2_SRP_SCL    0x001C
 
+// TODO: list current ANIMATION NAME,
+// animation timer and expected animation length
+
+#define KAO2_PIVOT_ANIMATE_BILIST (0x00AC + 0x0010)
+#define KAO2_BILIST_ANIMSTATE  0x0008
+#define KAO2_ANIMSTATE_TRACKID 0x0008
+
 #define KAO2_ACTOR_SCRIPT    0x0114
 #define KAO2_STATE_TERMINAL  0x0009
 #define KAO2_STATE_NAME      0x000C
 #define KAO2_STATE_DEFAULT   0x0020
 #define KAO2_STATE_GADGETS   0x0054
 
-#define KAO2_TIMER_ELAPSED  0x0014
+#define KAO2_TIMER_VPTR     0x005D84C0
+#define KAO2_TIMER_ELAPSED      0x0014
+
+// TODO: find all possible "eJumpPhysics",
+// list their Address and OverGroundHeight (FLOAT)
+
+#define KAO2_JUMPPHYSICS_VPTR        0x005D3BA0
+#define KAO2_JUMPPHYSICS_OVERGROUND      0x0814
 
 ////////////////////////////////////////////////////////////////
 // Cool macros
@@ -94,15 +109,23 @@ const char * KAO2_EXECUTABLE_NAMES[2] =
 #define EQ(__a, __b)  ((__a) == (__b))
 #define NE(__a, __b)  ((__a) != (__b))
 
+
+#define IS_ZERO(__a)      EQ(                   0, (__a))
+#define NOT_ZERO(__a)     NE(                   0, (__a))
+#define IS_FALSE(__a)     EQ(               FALSE, (__a))
+#define NOT_FALSE(__a)    NE(               FALSE, (__a))
 #define IS_NULL(__a)      EQ(                NULL, (__a))
 #define NOT_NULL(__a)     NE(                NULL, (__a))
 #define IS_INVALID(__a)   EQ(INVALID_HANDLE_VALUE, (__a))
 #define NOT_INVALID(__a)  NE(INVALID_HANDLE_VALUE, (__a))
+
 #define VALID_OFFSET(__a) NE(      INVALID_OFFSET, (__a))
 
 #define IS_EITHER(__a, __b, __c)  (EQ(__a, __b) || EQ(__a, __c))
 
-#define FAIL_IF_NULL(__a)  if IS_NULL(__a) { return FALSE; }
+#define FAIL_IF_ZERO(__a)   if IS_ZERO(__a) { return FALSE; }
+#define FAIL_IF_FALSE(__a)  if IS_FALSE(__a) { return FALSE; }
+#define FAIL_IF_NULL(__a)   if IS_NULL(__a) { return FALSE; }
 
 #define CHECK_WINDOW_AND_SET_FONT(__hwnd) \
     FAIL_IF_NULL(__hwnd) \
@@ -127,41 +150,52 @@ const char * KAO2_EXECUTABLE_NAMES[2] =
     CREATE_STATIC_WND_EDGES(GAMEINFO_labels[__index], LABEL_HEIGHT * __lines)
 
 #define MACRO_KAO2_READ_BYTE(__x, __at) \
-    FAIL_IF_NULL(KAO2_readMem(__at, __x, 0x01))
+    FAIL_IF_FALSE(KAO2_readMem(__at, __x, 0x01))
 
 #define MACRO_KAO2_READ_DWORD(__x, __at) \
-    FAIL_IF_NULL(KAO2_readMem(__at, __x, 0x04))
+    FAIL_IF_FALSE(KAO2_readMem(__at, __x, 0x04))
 
 #define MACRO_KAO_READ_STRING(__str, __at) \
-    FAIL_IF_NULL(KAO2_readMem(__at, &a, 0x04)) \
-    FAIL_IF_NULL(KAO2_readMem(a + 0x08, &b, 0x04)) \
-    FAIL_IF_NULL(KAO2_readMem(a + 0x0C, __str, b))
+    FAIL_IF_FALSE(KAO2_readMem(__at, &a, 0x04)) \
+    FAIL_IF_FALSE(KAO2_readMem(a + 0x08, &b, 0x04)) \
+    FAIL_IF_FALSE(KAO2_readMem(a + 0x0C, __str, b))
 
 ////////////////////////////////////////////////////////////////
 // Point structures
 ////////////////////////////////////////////////////////////////
 
-typedef struct ePoint3 ePoint3_t;
-struct ePoint3
+typedef struct ePoint3Tag ePoint3;
+
+struct ePoint3Tag
 {
     float x;
     float y;
     float z;
 };
 
-VOID ePoint3_set(ePoint3_t * pt, float x, float y, float z)
+VOID
+ePoint3_set(
+    ePoint3 *pt,
+    float x,
+    float y,
+    float z)
 {
     (pt->x) = x;
     (pt->y) = y;
     (pt->z) = z;
 }
 
-VOID ePoint3_reset(ePoint3_t * pt)
+VOID
+ePoint3_reset(
+    ePoint3 *pt)
 {
     ePoint3_set(pt, 0, 0, 0);
 }
 
-BOOL ePoint3_eq(ePoint3_t * a, ePoint3_t * b)
+BOOL
+ePoint3_eq(
+    ePoint3 *a,
+    ePoint3 *b)
 {
     return (
         EQ((a->x), (b->x)) &&
@@ -169,28 +203,34 @@ BOOL ePoint3_eq(ePoint3_t * a, ePoint3_t * b)
         EQ((a->z), (b->z)) );
 }
 
-//@ VOID ePoint3_add(ePoint3_t * a, ePoint3_t * b)
+//@ VOID ePoint3_add(ePoint3 *a, ePoint3 *b)
 //@ {
 //@     (a->x) += (b->x);
 //@     (a->y) += (b->y);
 //@     (a->z) += (b->z);
 //@ }
 
-//@ VOID ePoint3_sub(ePoint3_t * a, ePoint3_t * b)
+//@ VOID ePoint3_sub(ePoint3 *a, ePoint3 *b)
 //@ {
 //@     (a->x) -= (b->x);
 //@     (a->y) -= (b->y);
 //@     (a->z) -= (b->z);
 //@ }
 
-VOID ePoint3_set_sub(ePoint3_t * a, ePoint3_t * b,  ePoint3_t * c)
+VOID
+ePoint3_set_sub(
+    ePoint3 *a,
+    ePoint3 *b,
+    ePoint3 *c)
 {
     (a->x) = (b->x) - (c->x);
     (a->y) = (b->y) - (c->y);
     (a->z) = (b->z) - (c->z);
 }
 
-FLOAT ePoint3_length(ePoint3_t * pt)
+FLOAT
+ePoint3_length(
+    ePoint3 *pt)
 {
     return sqrt (
         (pt->x) * (pt->x) +
@@ -213,9 +253,10 @@ HFONT GAMEINFO_font;
 HWND KAO2_gameWindow;
 HANDLE KAO2_gameHandle;
 
-ePoint3_t g_heroLastPos;
-ePoint3_t g_heroLastVel;
+ePoint3 g_heroLastPos;
+ePoint3 g_heroLastVel;
 DWORD g_heroLastState;
+FLOAT g_heroLastTimerElapsed;
 
 DWORD g_lastLevelID;
 DWORD g_lastCollectables[3];
@@ -225,11 +266,27 @@ DWORD g_lastPersistentActors[2];
 // TOOL-ASSISTED MANIPULATION: Write bytes to Kao2 game process
 ////////////////////////////////////////////////////////////////
 
-BOOL KAO2_writeMem(DWORD address, LPCVOID from, size_t length)
+BOOL
+KAO2_writeMem(
+    DWORD address,
+    LPCVOID from,
+    size_t length)
 {
-    if (!WriteProcessMemory(KAO2_gameHandle, (LPVOID)address, from, length, NULL))
+    BOOL result = WriteProcessMemory(
+        KAO2_gameHandle,
+        (LPVOID) ((ULONG_PTR) address),
+        from,
+        length,
+        NULL);
+
+    if IS_FALSE(result)
     {
-        sprintf_s(g_lastMessage, LASTMSG_SIZE, "Could not write %d bytes to address 0x%08X!", length, address);
+        snprintf(
+            g_lastMessage,
+            LASTMSG_SIZE,
+            "Could not write %zu bytes to address 0x%08lX!",
+            length,
+            address);
 
         return FALSE;
     }
@@ -241,11 +298,27 @@ BOOL KAO2_writeMem(DWORD address, LPCVOID from, size_t length)
 // TOOL-ASSISTED MANIPULATION: Read bytes from Kao2 game process
 ////////////////////////////////////////////////////////////////
 
-BOOL KAO2_readMem(DWORD address, LPVOID into, size_t length)
+BOOL
+KAO2_readMem(
+    DWORD address,
+    LPVOID into,
+    size_t length)
 {
-    if (!ReadProcessMemory(KAO2_gameHandle, (LPVOID)address, into, length, NULL))
+    BOOL result = ReadProcessMemory(
+        KAO2_gameHandle,
+        (LPVOID) ((ULONG_PTR) address),
+        into,
+        length,
+        NULL);
+
+    if IS_FALSE(result)
     {
-        sprintf_s(g_lastMessage, LASTMSG_SIZE, "Could not read %d bytes from address 0x%08X!", length, address);
+        snprintf(
+            g_lastMessage,
+            LASTMSG_SIZE,
+            "Could not read %zu bytes from address 0x%08lX!",
+            length,
+            address);
 
         return FALSE;
     }
@@ -253,12 +326,15 @@ BOOL KAO2_readMem(DWORD address, LPVOID into, size_t length)
     return TRUE;
 }
 
-
 ////////////////////////////////////////////////////////////////
 // TOOL-ASSISTED MANIPULATION: Read data from list of offsets
 ////////////////////////////////////////////////////////////////
 
-BOOL KAO2_readSomeData(LPVOID into, size_t length, ...)
+BOOL
+KAO2_readSomeData(
+    LPVOID into,
+    size_t length,
+    ...)
 {
     va_list args;
     DWORD offset, address = 0;
@@ -267,7 +343,7 @@ BOOL KAO2_readSomeData(LPVOID into, size_t length, ...)
 
     while VALID_OFFSET(offset = va_arg(args, DWORD))
     {
-        if IS_NULL(KAO2_readMem(address + offset, &address, 0x04))
+        if IS_FALSE(KAO2_readMem(address + offset, &address, 0x04))
         {
             va_end(args);
             return FALSE;
@@ -276,13 +352,13 @@ BOOL KAO2_readSomeData(LPVOID into, size_t length, ...)
 
     va_end(args);
 
-    if (0 == length)
+    if IS_ZERO(length)
     {
-        (* ((LPDWORD)into)) = address;
+        *((LPDWORD) into) = address;
     }
     else
     {
-        FAIL_IF_NULL(KAO2_readMem(address, into, length))
+        FAIL_IF_FALSE(KAO2_readMem(address, into, length))
     }
 
     return TRUE;
@@ -292,13 +368,15 @@ BOOL KAO2_readSomeData(LPVOID into, size_t length, ...)
 // KAO2 PROCESS HOOKING: Match possible EXE filename
 ////////////////////////////////////////////////////////////////
 
-BOOL KAO2_matchGameExecutableName(const char * filename)
+BOOL
+KAO2_matchGameExecutableName(
+    const char *filename)
 {
     const int NAMES = sizeof(KAO2_EXECUTABLE_NAMES) / sizeof(const char *);
 
     for (int i = 0; i < NAMES; i++)
     {
-        if IS_NULL(strcmp(filename, KAO2_EXECUTABLE_NAMES[i]))
+        if IS_ZERO(strcmp(filename, KAO2_EXECUTABLE_NAMES[i]))
         {
             return TRUE;
         }
@@ -311,7 +389,10 @@ BOOL KAO2_matchGameExecutableName(const char * filename)
 // KAO2 PROCESS HOOKING: Match the window with process ID
 ////////////////////////////////////////////////////////////////
 
-BOOL KAO2_matchGameWindowWithProccess(const HWND found_window, const DWORD found_pid)
+BOOL
+KAO2_matchGameWindowWithProccess(
+    const HWND found_window,
+    const DWORD found_pid)
 {
     DWORD pid = 0;
     GetWindowThreadProcessId(found_window, &pid);
@@ -324,24 +405,26 @@ BOOL KAO2_matchGameWindowWithProccess(const HWND found_window, const DWORD found
 //  and return special handle on success
 ////////////////////////////////////////////////////////////////
 
-VOID KAO2_findGameProcess()
+VOID
+KAO2_findGameProcess(
+    void)
 {
     HANDLE proc_handle;
     HWND glut_window;
     DWORD pids[ENUMERATED_PROCESSES], i, count;
-    char buf[BUF_SIZE], * file_name, * p;
+    char buf[BUF_SIZE], *file_name, *p;
 
     /* Find game window */
     if IS_NULL(glut_window = FindWindow(KAO2_WINDOW_CLASSNAME, KAO2_WINDOW_NAME))
     {
-        sprintf_s(g_lastMessage, LASTMSG_SIZE, "Could not locate \"%s\" window!", KAO2_WINDOW_NAME);
+        snprintf(g_lastMessage, LASTMSG_SIZE, "Could not locate \"%s\" window!", KAO2_WINDOW_NAME);
     }
     else
     {
         /* Enumerate processes */
         if (!EnumProcesses(pids, (sizeof(DWORD) * ENUMERATED_PROCESSES), &count))
         {
-            sprintf_s(g_lastMessage, LASTMSG_SIZE, "EnumProcesses() failed!");
+            snprintf(g_lastMessage, LASTMSG_SIZE, "EnumProcesses() failed!");
         }
         else
         {
@@ -378,7 +461,7 @@ VOID KAO2_findGameProcess()
                 }
             }
 
-            sprintf_s(g_lastMessage, LASTMSG_SIZE, "No process module filename matches the expected executable name!");
+            snprintf(g_lastMessage, LASTMSG_SIZE, "No process module filename matches the expected executable name!");
         }
     }
 
@@ -390,7 +473,10 @@ VOID KAO2_findGameProcess()
 // HELPER: printing constant-length floating-point numbers
 ////////////////////////////////////////////////////////////////
 
-char * HELPER_fpText(char * buf, float value)
+char *
+HELPER_fpText(
+    char *buf,
+    float value)
 {
     char digit_before_dot;
     int int_part = (int) value;
@@ -400,11 +486,10 @@ char * HELPER_fpText(char * buf, float value)
     buf[0] = (value > 0) ? '+' : ( (value < 0) ? '-' : ' ' );
     buf[1] = ' ';
 
-    /* Left part (digits + NULL) */
+    /* Left part (digits + NULL terminator) */
     const int left_size = 6 + 1;
 
-    sprintf_s
-    (
+    snprintf(
         buf + 2, left_size,
         "%6d", (int_part >= 0) ? int_part : (-int_part)
     );
@@ -412,16 +497,15 @@ char * HELPER_fpText(char * buf, float value)
     decimal_index = strlen(buf) - 1;
     digit_before_dot = buf[decimal_index];
 
-    /* Right part ("0." + digits + NULL) */
+    /* Right part ("0." + digits + NULL terminator) */
     const int right_size = 2 + 5 + 1;
 
     /* Disabling FPU SIGN bit before FMOD */
-    (*(LPDWORD)(&value)) &= (~ 0x80000000);
+    value = fabsf(value);
 
-    sprintf_s
-    (
+    snprintf(
         buf + decimal_index, right_size,
-        "%.5f", (0 != value) ? fmod((double)value, 1.0) : 0.0
+        "%.5f", (0 != value) ? fmod((double) value, 1.0) : 0.0
     );
 
     buf[decimal_index] = digit_before_dot;
@@ -433,7 +517,10 @@ char * HELPER_fpText(char * buf, float value)
 // WINAPI GUI: Show quick text status
 ////////////////////////////////////////////////////////////////
 
-VOID GAMEINFO_showStatus(DWORD label_id, const char * msg)
+VOID
+GAMEINFO_showStatus(
+    DWORD label_id,
+    const char *msg)
 {
     SetWindowText(GAMEINFO_labels[label_id], msg);
     /* UpdateWindow(GAMEINFO_mainWindow); */
@@ -443,7 +530,10 @@ VOID GAMEINFO_showStatus(DWORD label_id, const char * msg)
 // TOOL-ASSISTED INFO: Read xforms's position
 ////////////////////////////////////////////////////////////////
 
-BOOL GAMEINFO_readXformPos(ePoint3_t * pos, DWORD xform)
+BOOL
+GAMEINFO_readXformPos(
+    ePoint3 *pos,
+    DWORD xform)
 {
     DWORD address = xform + KAO2_XFORM_SRP + KAO2_SRP_POS;
 
@@ -458,19 +548,22 @@ BOOL GAMEINFO_readXformPos(ePoint3_t * pos, DWORD xform)
 // TOOL-ASSISTED INFO: Read actor's full state name
 ////////////////////////////////////////////////////////////////
 
-BOOL GAMEINFO_readActorStateName(char * str_final, DWORD * state)
+BOOL
+GAMEINFO_readActorStateName(
+    char *str_final,
+    DWORD *state)
 {
-    DWORD a, b, prev_state = NULL;
+    DWORD a, b, prev_state = 0;
     char str_combine[BUF_SIZE];
     char state_name[MEDIUM_BUF_SIZE];
 
     str_final[0] = '\0';
 
-    while NOT_NULL(*state)
+    while NOT_ZERO(*state)
     {
         MACRO_KAO_READ_STRING(state_name, ((*state) + KAO2_STATE_NAME))
-        sprintf_s(str_combine, BUF_SIZE, "%s::%s", str_final, state_name);
-        strcpy_s(str_final, BUF_SIZE, str_combine);
+        snprintf(str_combine, BUF_SIZE, "%s::%s", str_final, state_name);
+        strncpy(str_final, str_combine, BUF_SIZE);
 
         prev_state = (*state);
         MACRO_KAO2_READ_DWORD(state, ((*state) + KAO2_STATE_DEFAULT))
@@ -481,20 +574,60 @@ BOOL GAMEINFO_readActorStateName(char * str_final, DWORD * state)
 }
 
 ////////////////////////////////////////////////////////////////
+// TOOL-ASSISTED INFO: Read actor's `timer.elapsed` field
+////////////////////////////////////////////////////////////////
+
+BOOL
+GAMEINFO_readActorTimerElapsed(
+    FLOAT *result,
+    DWORD namespace)
+{
+    DWORD a;
+    DWORD gadgetsCount;
+    DWORD gadgetsArray;
+    DWORD gadgetInstance;
+    DWORD gadgetVptr;
+
+    if NOT_ZERO(namespace)
+    {
+        MACRO_KAO2_READ_DWORD(&(gadgetsCount), (namespace + KAO2_STATE_GADGETS))
+        MACRO_KAO2_READ_DWORD(&(gadgetsArray), (namespace + KAO2_STATE_GADGETS + 0x08))
+
+        for (a = 0; a < gadgetsCount; a++)
+        {
+            MACRO_KAO2_READ_DWORD(&(gadgetInstance), (gadgetsArray + 0x04 * a))
+            MACRO_KAO2_READ_DWORD(&(gadgetVptr), gadgetInstance)
+
+            if EQ(KAO2_TIMER_VPTR, gadgetVptr)
+            {
+                MACRO_KAO2_READ_DWORD(result, gadgetInstance + KAO2_TIMER_ELAPSED)
+
+                return TRUE;
+            }
+        }
+    }
+
+    return FALSE;
+}
+
+////////////////////////////////////////////////////////////////
 // TOOL-ASSISTED INFO: Is actor terminated?
 ////////////////////////////////////////////////////////////////
 
-BOOL GAMEINFO_isActorTerminated(DWORD array, DWORD id)
+BOOL
+GAMEINFO_isActorTerminated(
+    DWORD array,
+    DWORD id)
 {
     DWORD actor, state;
 
     MACRO_KAO2_READ_DWORD(&actor, (array + 0x04 * id))
 
-    if NOT_NULL(actor)
+    if NOT_ZERO(actor)
     {
         MACRO_KAO2_READ_DWORD(&state, (actor + KAO2_ACTOR_SCRIPT))
 
-        while NOT_NULL(state)
+        while NOT_ZERO(state)
         {
             MACRO_KAO2_READ_BYTE(&actor, (state + KAO2_STATE_TERMINAL))
 
@@ -514,13 +647,14 @@ BOOL GAMEINFO_isActorTerminated(DWORD array, DWORD id)
 // TOOL-ASSISTED INFO: Update gameplay
 ////////////////////////////////////////////////////////////////
 
-BOOL GAMEINFO_updateGameplay()
+BOOL
+GAMEINFO_updateGameplay(
+    void)
 {
     char buf[LARGE_BUF_SIZE], level_name[MEDIUM_BUF_SIZE];
     DWORD a, b, level_id, levels_count, level_struct,
         collectables[3], persistent_actors[3];
     BOOL changed = FALSE;
-    BYTE terminated;
 
     /* Level info */
 
@@ -531,7 +665,7 @@ BOOL GAMEINFO_updateGameplay()
     {
         KAO2_readSomeData
         (
-            &level_struct, NULL,
+            &level_struct, 0,
             (KAO2_LEVEL_ARRAY + 0x08), (0x04 * level_id),
             INVALID_OFFSET
         );
@@ -555,7 +689,7 @@ BOOL GAMEINFO_updateGameplay()
     MACRO_KAO2_READ_DWORD(&(persistent_actors[2]), (KAO2_PERSISTENT_ACTORS_ARRAY + 0x08));
 
     persistent_actors[0] = 0;
-    if NOT_NULL(persistent_actors[2])
+    if NOT_ZERO(persistent_actors[2])
     {
         for (a = 0; a < persistent_actors[1]; a++)
         {
@@ -596,12 +730,11 @@ BOOL GAMEINFO_updateGameplay()
 
     if (changed)
     {
-        sprintf_s
-        (
+        snprintf(
             buf, LARGE_BUF_SIZE,
-                "level_%02d: \"%s\"\n\n"
-                "total collectables: ( %4d ) ( %3d ) ( %3d )\n"
-                "terminated persistent actors: %3d of %3d",
+                "level_%02lu: \"%s\"\n\n"
+                "total collectables: ( %4lu ) ( %3lu ) ( %3lu )\n"
+                "terminated persistent actors: %3lu of %3lu",
             level_id, level_name,
             collectables[0], collectables[1], collectables[2],
             persistent_actors[0], persistent_actors[1]
@@ -617,30 +750,39 @@ BOOL GAMEINFO_updateGameplay()
 // TOOL-ASSISTED INFO: Update hero
 ////////////////////////////////////////////////////////////////
 
-BOOL GAMEINFO_updateHero()
+BOOL
+GAMEINFO_updateHero(
+    void)
 {
     char buf[LARGE_BUF_SIZE];
     char str_state[BUF_SIZE];
-    char fp[7][TINY_BUF_SIZE];
+    char fp[8][TINY_BUF_SIZE];
     BOOL changed = FALSE;
-    ePoint3_t pos, vel;
-    DWORD hero_actor, hero_state;
+    ePoint3 pos, vel;
+    DWORD hero_actor, hero_namespace, hero_state;
+    FLOAT timerElapsed;
 
     /* Hero instance */
 
-    KAO2_readSomeData
-    (
-        &hero_actor, NULL,
+    KAO2_readSomeData(
+        &hero_actor, 0,
         KAO2_GAMELET, KAO2_GAMELET_HERO,
         INVALID_OFFSET
     );
 
     /* Hero state & Hero position */
 
-    MACRO_KAO2_READ_DWORD(&hero_state, hero_actor + KAO2_ACTOR_SCRIPT)
+    MACRO_KAO2_READ_DWORD(&(hero_namespace), hero_actor + KAO2_ACTOR_SCRIPT)
 
-    FAIL_IF_NULL(GAMEINFO_readXformPos(&pos, hero_actor))
-    FAIL_IF_NULL(GAMEINFO_readActorStateName(str_state, &hero_state))
+    FAIL_IF_FALSE(GAMEINFO_readXformPos(&(pos), hero_actor))
+
+    hero_state = hero_namespace;
+    FAIL_IF_FALSE(GAMEINFO_readActorStateName(str_state, &(hero_state)))
+
+    if IS_FALSE(GAMEINFO_readActorTimerElapsed(&timerElapsed, hero_namespace))
+    {
+        timerElapsed = (-1);
+    }
 
     if NE(hero_state, g_heroLastState)
     {
@@ -648,34 +790,41 @@ BOOL GAMEINFO_updateHero()
         g_heroLastState = hero_state;
     }
 
-    if (ePoint3_eq(&pos, &g_heroLastPos))
+    if (ePoint3_eq(&(pos), &(g_heroLastPos)))
     {
         vel = g_heroLastVel;
     }
     else
     {
-        ePoint3_set_sub(&vel, &pos, &g_heroLastPos);
+        ePoint3_set_sub(&(vel), &(pos), &(g_heroLastPos));
 
         changed = TRUE;
         g_heroLastPos = pos;
         g_heroLastVel = vel;
     }
 
+    if NE(timerElapsed, g_heroLastTimerElapsed)
+    {
+        changed = TRUE;
+        g_heroLastTimerElapsed = timerElapsed;
+    }
+
     /* If anything changed */
 
     if (changed)
     {
-        sprintf_s
-        (
+        snprintf(
             buf, LARGE_BUF_SIZE,
                 "position: ( %s ) ( %s ) ( %s )\n"
-                "velocity: ( %s ) ( %s ) ( %s ) ( %s )\n\n"
-                "state: \"%s\"\n",
+                "velocity: ( %s ) ( %s ) ( %s ) ( %s )\n"
+                "\n"
+                "\"%s\"\n"
+                "timer.elapsed: ( %s )\n",
             HELPER_fpText(fp[0], pos.x), HELPER_fpText(fp[1], pos.y), HELPER_fpText(fp[2], pos.z),
             HELPER_fpText(fp[3], vel.x), HELPER_fpText(fp[4], vel.y), HELPER_fpText(fp[5], vel.z),
             HELPER_fpText(fp[6], ePoint3_length(&vel)),
-            str_state
-        );
+            str_state,
+            HELPER_fpText(fp[7], timerElapsed));
 
         GAMEINFO_showStatus(2, buf);
     }
@@ -720,15 +869,17 @@ BOOL GAMEINFO_windowLoop()
 // WINAPI GUI: Show error message
 ////////////////////////////////////////////////////////////////
 
-VOID GAMEINFO_iAmError(const char * caption)
+VOID
+GAMEINFO_iAmError(
+    const char *caption)
 {
     char buf[BUF_SIZE];
 
     GAMEINFO_showStatus(0, caption);
 
-    if NOT_NULL(g_lastMessage[0])
+    if NOT_ZERO(g_lastMessage[0])
     {
-        sprintf_s(buf, BUF_SIZE, "%s\n\n%s", caption, g_lastMessage);
+        snprintf(buf, BUF_SIZE, "%s\n\n%s", caption, g_lastMessage);
 
         MessageBox(GAMEINFO_mainWindow, buf, MSGBOX_ERROR_CAPTION, MB_ICONERROR);
     }
@@ -738,7 +889,12 @@ VOID GAMEINFO_iAmError(const char * caption)
 // WINAPI GUI: Callback procedure for the main window of this tool
 ////////////////////////////////////////////////////////////////
 
-LRESULT CALLBACK GAMEINFO_windowProcedure(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam)
+LRESULT CALLBACK
+GAMEINFO_windowProcedure(
+    HWND hWnd,
+    UINT Msg,
+    WPARAM wParam,
+    LPARAM lParam)
 {
     switch (Msg)
     {
@@ -798,7 +954,9 @@ LRESULT CALLBACK GAMEINFO_windowProcedure(HWND hWnd, UINT Msg, WPARAM wParam, LP
 // WINAPI GUI: Creating all windows and controls
 ////////////////////////////////////////////////////////////////
 
-BOOL GAMEINFO_createWindows(HINSTANCE hInstance)
+BOOL
+GAMEINFO_createWindows(
+    HINSTANCE hInstance)
 {
     HWND test_window;
     WNDCLASSEX window_class;
@@ -813,7 +971,7 @@ BOOL GAMEINFO_createWindows(HINSTANCE hInstance)
     const int WINDOW_HEIGHT = 480;
     const int WIDTH_WO_PADDINGS = WINDOW_WIDTH - 2 * PADDING;
 
-    LONG i, j, x = PADDING, y = PADDING, x2, y2;
+    LONG i, x = PADDING, y = PADDING;
 
     /* Register Window */
 
@@ -825,7 +983,7 @@ BOOL GAMEINFO_createWindows(HINSTANCE hInstance)
     window_class.lpfnWndProc = GAMEINFO_windowProcedure;
     window_class.lpszClassName = KAO2_GAMEINFO_WINDOW_CLASSNAME;
 
-    FAIL_IF_NULL(RegisterClassEx(&window_class))
+    FAIL_IF_FALSE(RegisterClassEx(&window_class))
 
     /* Create font */
 
@@ -883,7 +1041,8 @@ BOOL GAMEINFO_createWindows(HINSTANCE hInstance)
         "BUTTON", "Attach <KAO2> game process",
         WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON,
         x, y, WIDTH_WO_PADDINGS, BUTTON_HEIGHT,
-        GAMEINFO_mainWindow, (HMENU)IDM_BUTTON_ATTACH, hInstance, NULL
+        GAMEINFO_mainWindow, (HMENU) ((ULONG_PTR) IDM_BUTTON_ATTACH),
+        hInstance, NULL
     );
 
     CHECK_WINDOW_AND_SET_FONT(test_window);
@@ -899,7 +1058,7 @@ BOOL GAMEINFO_createWindows(HINSTANCE hInstance)
 
     /* Hero info */
 
-    CREATE_LABEL_WNDS_PAIR(2, "Hero (Kao)", 4)
+    CREATE_LABEL_WNDS_PAIR(2, "Hero (Kao)", 6)
 
     /* Default text */
 
@@ -929,9 +1088,10 @@ int CALLBACK WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance,
     KAO2_gameWindow = NULL;
     KAO2_gameHandle = INVALID_HANDLE_VALUE;
 
-    ePoint3_reset(&g_heroLastPos);
-    ePoint3_reset(&g_heroLastVel);
-    g_heroLastState = NULL;
+    ePoint3_reset(&(g_heroLastPos));
+    ePoint3_reset(&(g_heroLastVel));
+    g_heroLastState = 0;
+    g_heroLastTimerElapsed = (-1);
 
     g_lastLevelID = (-1);
     g_lastCollectables[0] = (-1);

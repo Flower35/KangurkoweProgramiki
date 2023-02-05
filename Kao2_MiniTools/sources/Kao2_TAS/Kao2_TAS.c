@@ -28,27 +28,26 @@
 // (2021-11-19)
 //  * Kolejne ciekawe definicje i makra dopisane, automatyczny
 //   focus na okno gry w trybie nagrywania ręcznych inputów.
+// (2023-01-18)
+//  * Poprawione definicje typów (`NULL` jako wskażnikowy.
+//   a `FALSE` i `0` jako typy liczbowe).
+// (2023-02-05)
+// * (GCC) Usunięte pragmy, poprawione format specifiery.
 ////////////////////////////////////////////////////////////////
 
 ////////////////////////////////////////////////////////////////
 // Libraries
 ////////////////////////////////////////////////////////////////
 
-#define NULL  0  // not C++'s `((void *)0)`, just zero :)
-
 #define _USE_MATH_DEFINES
 #include <math.h>
 
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 
-#include <Windows.h>
+#include <windows.h>
 #include <psapi.h>
-
-#pragma comment (lib,        "USER32.LIB")
-#pragma comment (lib,         "GDI32.LIB")
-#pragma comment (lib,      "COMDLG32.LIB")
-#pragma comment (linker, "/subsystem:windows")
 
 ////////////////////////////////////////////////////////////////
 // Const Defines for GUI
@@ -87,13 +86,15 @@ enum IDM
     IDM_BUTTON_FRAME_PARAM
 };
 
-const char * UPPER_BUTTON_NAMES[UPPER_BUTTONS_COUNT] =
+const char *
+UPPER_BUTTON_NAMES[UPPER_BUTTONS_COUNT] =
 {
     "Attach <KAO2>", "RUN!  |>", "I-Frame advance",
     "Open data file", "Save data file", "Clear all inputs"
 };
 
-const char * UPPER_CHECKBOX_NAMES[UPPER_CHECKBOX_COUNT] =
+const char *
+UPPER_CHECKBOX_NAMES[UPPER_CHECKBOX_COUNT] =
 {
     "RECORDING mode (checked) / REPLAY mode (unchecked)",
     "Step-by-step mode (manual inputs in REC mode)",
@@ -101,13 +102,15 @@ const char * UPPER_CHECKBOX_NAMES[UPPER_CHECKBOX_COUNT] =
     "Stabilize framerate of updates (enter desired FPS and press ENTER)"
 };
 
-const char * OTHER_BUTTON_NAMES[4 + 2] =
+const char *
+OTHER_BUTTON_NAMES[4 + 2] =
 {
     "<", ">", "+", "-",
     "Left Stick (x, y)", "Right Stick (x, y)"
 };
 
-const char * FRAME_PARAM_NAMES[1 << 4] =
+const char *
+FRAME_PARAM_NAMES[1 << 4] =
 {
     "(x) JUMP", "(o) PUNCH", "(q) ROLL", "(t) THROW",
     "(RB) STRAFE", "(LB) FPP", "(L1) unused", "(SELECT) HUD",
@@ -144,15 +147,14 @@ enum ControlFlags
 BOOL KAO2_writeMem(DWORD address, LPCVOID from, size_t length);
 BOOL KAO2_readMem(DWORD address, LPVOID into, size_t length);
 
-struct FrameNode;
-typedef struct FrameNode FrameNode_t;
+typedef struct FrameNodeTag FrameNode;
 
-struct FrameNode
+struct FrameNodeTag
 {
     float sticks[2][2];
     WORD buttons; /* 16 states */
-    FrameNode_t * prev;
-    FrameNode_t * next;
+    FrameNode *prev;
+    FrameNode *next;
 };
 
 #define KAO2_ANIM_FPS    30
@@ -162,7 +164,8 @@ struct FrameNode
 #define KAO2_WINDOW_CLASSNAME  "GLUT"
 #define KAO2_WINDOW_NAME       "kangurek Kao: 2ga runda"
 
-const char * KAO2_EXECUTABLE_NAMES[2] =
+const char *
+KAO2_EXECUTABLE_NAMES[2] =
 {
     "kao2.exe", "kao2_mod.exe"
 };
@@ -199,8 +202,8 @@ WNDPROC KAO2_editFrameruleProcedure;
 HFONT KAO2_font01;
 HFONT KAO2_font02;
 
-FrameNode_t * g_frames;
-FrameNode_t * g_currentFrame;
+FrameNode *g_frames;
+FrameNode *g_currentFrame;
 int g_currentPage;
 int g_currentFrameId;
 int g_totalFrames;
@@ -215,6 +218,10 @@ HANDLE KAO2_gameHandle;
 #define EQ(__a, __b)  ((__a) == (__b))
 #define NE(__a, __b)  ((__a) != (__b))
 
+#define IS_ZERO(__a)      EQ(                   0, (__a))
+#define NOT_ZERO(__a)     NE(                   0, (__a))
+#define IS_FALSE(__a)     EQ(               FALSE, (__a))
+#define NOT_FALSE(__a)    NE(               FALSE, (__a))
 #define IS_NULL(__a)      EQ(                NULL, (__a))
 #define NOT_NULL(__a)     NE(                NULL, (__a))
 #define IS_ONE(__a)       EQ(                   1, (__a))
@@ -223,7 +230,9 @@ HANDLE KAO2_gameHandle;
 
 #define IS_EITHER(__a, __b, __c)  (EQ(__a, __b) || EQ(__a, __c))
 
-#define FAIL_IF_NULL(__a)  if IS_NULL(__a) { return FALSE; }
+#define FAIL_IF_ZERO(__a)   if IS_ZERO(__a) { return FALSE; }
+#define FAIL_IF_FALSE(__a)  if IS_FALSE(__a) { return FALSE; }
+#define FAIL_IF_NULL(__a)   if IS_NULL(__a) { return FALSE; }
 
 #define MACRO_CLAMPF(__x, __min, __max) \
     (__x > __max) ? __max : \
@@ -254,8 +263,8 @@ HANDLE KAO2_gameHandle;
     else { \
         a = KAO2_frameruleInjection(); \
         if (a) { \
-            if IS_ONE(a) { sprintf_s(buf, MEDIUM_BUF_SIZE, "Enabled frame synchronization (%.2f FPS limit).", (KAO2_ANIM_FPS / g_updateFramePortion)); \
-            } else { sprintf_s(buf, MEDIUM_BUF_SIZE, "Disabled frame synchronization."); } \
+            if IS_ONE(a) { snprintf(buf, MEDIUM_BUF_SIZE, "Enabled frame synchronization (%.2f FPS limit).", (KAO2_ANIM_FPS / g_updateFramePortion)); \
+            } else { snprintf(buf, MEDIUM_BUF_SIZE, "Disabled frame synchronization."); } \
             KAO2_showStatus(buf); \
         } else { \
             KAO2_iAmError("Failed to inject frame-rule code!"); \
@@ -263,26 +272,26 @@ HANDLE KAO2_gameHandle;
     }
 
 #define TAS_MACRO_INJECT_CODE(__array, __at) \
-    FAIL_IF_NULL(KAO2_writeMem(__at, __array, sizeof(__array)))
+    FAIL_IF_FALSE(KAO2_writeMem(__at, __array, sizeof(__array)))
 
 #define TAS_MACRO_INJECT_STR(__str, __at) \
-    FAIL_IF_NULL(KAO2_writeMem(__at, __str, 0x01 + strlen(__str)))
+    FAIL_IF_FALSE(KAO2_writeMem(__at, __str, 0x01 + strlen(__str)))
 
 #define TAS_MACRO_STORE_DWORD(__dword, __at) \
-    FAIL_IF_NULL(KAO2_writeMem(__at, &__dword, 0x04))
+    FAIL_IF_FALSE(KAO2_writeMem(__at, &__dword, 0x04))
 
 #define TAS_MACRO_STORE_FLAG(__value, __at) \
     flag = __value; \
-    FAIL_IF_NULL(KAO2_writeMem(__at, &flag, 0x01))
+    FAIL_IF_FALSE(KAO2_writeMem(__at, &flag, 0x01))
 
 #define TAS_MACRO_WAIT_FLAG_EQ(__value, __at) \
     do { \
-        FAIL_IF_NULL(KAO2_readMem(__at, &flag, 0x01)) \
+        FAIL_IF_FALSE(KAO2_readMem(__at, &flag, 0x01)) \
     } while EQ(__value, flag);
 
 #define TAS_MACRO_WAIT_FLAG_NE_WINLOOP(__value, __at) \
     do { \
-        FAIL_IF_NULL(KAO2_readMem(__at, &flag, 0x01)) \
+        FAIL_IF_FALSE(KAO2_readMem(__at, &flag, 0x01)) \
         TAS_MACRO_WINDOWLOOP \
     } while NE(__value, flag);
 
@@ -311,7 +320,7 @@ HANDLE KAO2_gameHandle;
     EQ(BST_CHECKED, SendMessage((HWND)lParam, BM_GETCHECK, (WPARAM)NULL, (LPARAM)NULL))
 
 #define TAS_MACRO_RECORDING_MSG(details) \
-    sprintf_s(buf, BUF_SIZE, "Recording inputs... [%05i] %s", a, details); \
+    snprintf(buf, BUF_SIZE, "Recording inputs... [%05li] %s", a, details); \
     KAO2_showStatus(buf); \
 
 ////////////////////////////////////////////////////////////////
@@ -335,10 +344,10 @@ const BYTE KAO2_INJECTION_RECMODE[51] =
 #define KAO2_PAD_STICKS_ADDRESS    0x006269BC
 #define KAO2_BUTTONS_LIST_ADDRESS  0x006269DC
 
-const char * KAO2_TASMSG_STANDBY = "[TAS] standby ;)";
-const char * KAO2_TASMSG_PLAY    = "[TAS] PLAY: %5i / %5i";
-const char * KAO2_TASMSG_REC     = "[TAS] REC: %5i";
-const char * KAO2_AVGFPS         = "Average FPS: %.4f";
+const char *KAO2_TASMSG_STANDBY = "[TAS] standby ;)";
+const char *KAO2_TASMSG_PLAY    = "[TAS] PLAY: %5i / %5i";
+const char *KAO2_TASMSG_REC     = "[TAS] REC: %5i";
+const char *KAO2_AVGFPS         = "Average FPS: %.4f";
 
 #define KAO2_TASMSG_ADDRESS     0x006096F0
 #define KAO2_AVGFPS_ADDRESS     0x0060970C
@@ -396,7 +405,9 @@ enum KAO2_KEY_DEFINES
 // FRAME NODE: Reset local input frame
 ////////////////////////////////////////////////////////////////
 
-VOID FrameNode_reset(FrameNode_t * node)
+VOID
+FrameNode_reset(
+    FrameNode *node)
 {
     if NOT_NULL(node)
     {
@@ -414,7 +425,9 @@ VOID FrameNode_reset(FrameNode_t * node)
 // FRAME NODE: Write into the game
 ////////////////////////////////////////////////////////////////
 
-BOOL FrameNode_writeToGame(FrameNode_t * node)
+BOOL
+FrameNode_writeToGame(
+    FrameNode *node)
 {
     DWORD a, b, address = KAO2_PAD_STICKS_ADDRESS;
     BYTE flag;
@@ -423,7 +436,7 @@ BOOL FrameNode_writeToGame(FrameNode_t * node)
     {
         for (b = 0; b < 2; b++)
         {
-            FAIL_IF_NULL(KAO2_writeMem(address, &(node->sticks[a][b]), 0x04))
+            FAIL_IF_FALSE(KAO2_writeMem(address, &(node->sticks[a][b]), 0x04))
 
             address += 0x04;
         }
@@ -437,7 +450,7 @@ BOOL FrameNode_writeToGame(FrameNode_t * node)
     {
         if (b & (node->buttons))
         {
-            FAIL_IF_NULL(KAO2_writeMem(address, &flag, 0x01))
+            FAIL_IF_FALSE(KAO2_writeMem(address, &flag, 0x01))
         }
 
         b = (b << 1);
@@ -451,7 +464,9 @@ BOOL FrameNode_writeToGame(FrameNode_t * node)
 // FRAME NODE: Read from the game
 ////////////////////////////////////////////////////////////////
 
-BOOL FrameNode_readFromGame(FrameNode_t * node)
+BOOL
+FrameNode_readFromGame(
+    FrameNode *node)
 {
     DWORD a, b, address = KAO2_PAD_STICKS_ADDRESS;
     BYTE flag;
@@ -460,7 +475,7 @@ BOOL FrameNode_readFromGame(FrameNode_t * node)
     {
         for (b = 0; b < 2; b++)
         {
-            FAIL_IF_NULL(KAO2_readMem(address, &(node->sticks[a][b]), 0x04))
+            FAIL_IF_FALSE(KAO2_readMem(address, &(node->sticks[a][b]), 0x04))
 
             address += 0x04;
         }
@@ -472,7 +487,7 @@ BOOL FrameNode_readFromGame(FrameNode_t * node)
 
     for (a = 0; a < ((1 << 4) - 1); a++)
     {
-        FAIL_IF_NULL(KAO2_readMem(address, &flag, 0x01))
+        FAIL_IF_FALSE(KAO2_readMem(address, &flag, 0x01))
 
         if (flag)
         {
@@ -490,9 +505,16 @@ BOOL FrameNode_readFromGame(FrameNode_t * node)
 // FRAME NODE: Create new object
 ////////////////////////////////////////////////////////////////
 
-FrameNode_t * FrameNode_create(float l_x, float l_y, float r_x, float r_y, WORD buttons, FrameNode_t * parent)
+FrameNode *
+FrameNode_create(
+    float l_x,
+    float l_y,
+    float r_x,
+    float r_y,
+    WORD buttons,
+    FrameNode *parent)
 {
-    FrameNode_t * node = (FrameNode_t *) malloc(sizeof(FrameNode_t));
+    FrameNode *node = (FrameNode *) malloc(sizeof(FrameNode));
     FAIL_IF_NULL(node);
 
     node->sticks[0][0] = l_x;
@@ -521,7 +543,9 @@ FrameNode_t * FrameNode_create(float l_x, float l_y, float r_x, float r_y, WORD 
 // FRAME NODE: Create empty object
 ////////////////////////////////////////////////////////////////
 
-FrameNode_t * FrameNode_createEmpty(FrameNode_t * parent)
+FrameNode *
+FrameNode_createEmpty(
+    FrameNode *parent)
 {
     return FrameNode_create(0, 0, 0, 0, 0, parent);
 }
@@ -530,7 +554,10 @@ FrameNode_t * FrameNode_createEmpty(FrameNode_t * parent)
 // FRAME NODE: Create new object from an existing node
 ////////////////////////////////////////////////////////////////
 
-FrameNode_t * FrameNode_createFromCopy(FrameNode_t * node, FrameNode_t * parent)
+FrameNode *
+FrameNode_createFromCopy(
+    FrameNode *node,
+    FrameNode *parent)
 {
     if NOT_NULL(node)
     {
@@ -549,12 +576,14 @@ FrameNode_t * FrameNode_createFromCopy(FrameNode_t * node, FrameNode_t * parent)
 // FRAME NODE: remove chain of input-frames
 ////////////////////////////////////////////////////////////////
 
-VOID FrameNode_remove(FrameNode_t ** head_ref)
+VOID
+FrameNode_remove(
+    FrameNode **head_ref)
 {
-    FrameNode_t * current = * head_ref;
-    FrameNode_t * next = NULL;
+    FrameNode *current = *head_ref;
+    FrameNode *next = NULL;
 
-    * head_ref = NULL;
+    *head_ref = NULL;
 
     while NOT_NULL(current)
     {
@@ -568,7 +597,10 @@ VOID FrameNode_remove(FrameNode_t ** head_ref)
 // FRAME NODE: Get i-th frame (if exists)
 ////////////////////////////////////////////////////////////////
 
-FrameNode_t * FrameNode_getIth(FrameNode_t * head, int id)
+FrameNode *
+FrameNode_getIth(
+    FrameNode *head,
+    int id)
 {
     if (id < 0)
     {
@@ -588,7 +620,9 @@ FrameNode_t * FrameNode_getIth(FrameNode_t * head, int id)
 // Quickly check if file has "*.dat" extension
 ////////////////////////////////////////////////////////////////
 
-BOOL filenameDatExt(const char * name)
+BOOL
+filenameDatExt(
+    const char *name)
 {
     int i = strlen(name);
 
@@ -617,11 +651,19 @@ BOOL filenameDatExt(const char * name)
 // BINARY FILE WITH INPUT FRAMES: Write bytes
 ////////////////////////////////////////////////////////////////
 
-BOOL KAO2_writeFile(HANDLE file, LPCVOID what, size_t length)
+BOOL
+KAO2_writeFile(
+    HANDLE file,
+    LPCVOID what,
+    size_t length)
 {
-    if (!WriteFile(file, what, length, NULL, NULL))
+    if IS_FALSE(WriteFile(file, what, length, NULL, NULL))
     {
-        sprintf_s(g_lastMessage, LASTMSG_SIZE, "Could not write %d bytes to the opened file!", length);
+        snprintf(
+            g_lastMessage,
+            LASTMSG_SIZE,
+            "Could not write %zu bytes to the opened file!",
+            length);
     }
 
     return TRUE;
@@ -631,11 +673,19 @@ BOOL KAO2_writeFile(HANDLE file, LPCVOID what, size_t length)
 // BINARY FILE WITH INPUT FRAMES: Read bytes
 ////////////////////////////////////////////////////////////////
 
-BOOL KAO2_readFile(HANDLE file, LPVOID what, size_t length)
+BOOL
+KAO2_readFile(
+    HANDLE file,
+    LPVOID what,
+    size_t length)
 {
-    if (!ReadFile(file, what, length, NULL, NULL))
+    if IS_FALSE(ReadFile(file, what, length, NULL, NULL))
     {
-        sprintf_s(g_lastMessage, LASTMSG_SIZE, "Could not read %d bytes from the opened file!", length);
+        snprintf(
+            g_lastMessage,
+            LASTMSG_SIZE,
+            "Could not read %zu bytes from the opened file!",
+            length);
     }
 
     return TRUE;
@@ -645,11 +695,13 @@ BOOL KAO2_readFile(HANDLE file, LPVOID what, size_t length)
 // BINARY FILE WITH INPUT FRAMES: Saving current list
 ////////////////////////////////////////////////////////////////
 
-BOOL KAO2_binfileSave()
+BOOL
+KAO2_binfileSave(
+    void)
 {
     int i;
     char buf[BUF_SIZE];
-    FrameNode_t * frame;
+    FrameNode *frame;
 
     OPENFILENAME ofn;
     HANDLE file;
@@ -665,7 +717,7 @@ BOOL KAO2_binfileSave()
 
     buf[0] = '\0';
 
-    if NOT_NULL(GetSaveFileName(&ofn))
+    if NOT_FALSE(GetSaveFileName(&ofn))
     {
         if (!filenameDatExt(buf))
         {
@@ -681,13 +733,13 @@ BOOL KAO2_binfileSave()
 
         if IS_INVALID(file)
         {
-            sprintf_s(g_lastMessage, LASTMSG_SIZE, "Could not create that file.");
+            snprintf(g_lastMessage, LASTMSG_SIZE, "Could not create that file.");
             return FALSE;
         }
 
-        FAIL_IF_NULL(KAO2_writeFile(file, (LPCVOID) TAS_BINFILE_HEADER, 0x08))
+        FAIL_IF_FALSE(KAO2_writeFile(file, (LPCVOID) TAS_BINFILE_HEADER, 0x08))
 
-        FAIL_IF_NULL(KAO2_writeFile(file, (LPCVOID) &g_totalFrames, 0x04))
+        FAIL_IF_FALSE(KAO2_writeFile(file, (LPCVOID) &g_totalFrames, 0x04))
 
         frame = g_frames;
 
@@ -695,16 +747,16 @@ BOOL KAO2_binfileSave()
         {
             if IS_NULL(frame)
             {
-                sprintf_s(g_lastMessage, LASTMSG_SIZE, "NULL i-frame found. This should not happen...");
+                snprintf(g_lastMessage, LASTMSG_SIZE, "NULL i-frame found. This should not happen...");
                 CloseHandle(file);
                 return FALSE;
             }
 
-            FAIL_IF_NULL(KAO2_writeFile(file, (LPCVOID) &(frame->sticks[0][0]), 0x04))
-            FAIL_IF_NULL(KAO2_writeFile(file, (LPCVOID) &(frame->sticks[0][1]), 0x04))
-            FAIL_IF_NULL(KAO2_writeFile(file, (LPCVOID) &(frame->sticks[1][0]), 0x04))
-            FAIL_IF_NULL(KAO2_writeFile(file, (LPCVOID) &(frame->sticks[1][1]), 0x04))
-            FAIL_IF_NULL(KAO2_writeFile(file, (LPCVOID) &(frame->buttons), 0x02))
+            FAIL_IF_FALSE(KAO2_writeFile(file, (LPCVOID) &(frame->sticks[0][0]), 0x04))
+            FAIL_IF_FALSE(KAO2_writeFile(file, (LPCVOID) &(frame->sticks[0][1]), 0x04))
+            FAIL_IF_FALSE(KAO2_writeFile(file, (LPCVOID) &(frame->sticks[1][0]), 0x04))
+            FAIL_IF_FALSE(KAO2_writeFile(file, (LPCVOID) &(frame->sticks[1][1]), 0x04))
+            FAIL_IF_FALSE(KAO2_writeFile(file, (LPCVOID) &(frame->buttons), 0x02))
 
             frame = (frame->next);
         }
@@ -719,13 +771,15 @@ BOOL KAO2_binfileSave()
 // BINARY FILE WITH INPUT FRAMES: Loading previously stored list
 ////////////////////////////////////////////////////////////////
 
-BOOL KAO2_binfileLoad()
+BOOL
+KAO2_binfileLoad(
+    void)
 {
     DWORD a, b;
     WORD buttons;
     float l_x, l_y, r_x, r_y;
     char buf[BUF_SIZE];
-    FrameNode_t * frame, * prev, * new_head;
+    FrameNode *frame, *prev, *new_head;
 
     OPENFILENAME ofn;
     HANDLE file;
@@ -741,37 +795,37 @@ BOOL KAO2_binfileLoad()
 
     buf[0] = '\0';
 
-    if NOT_NULL(GetOpenFileName(&ofn))
+    if NOT_FALSE(GetOpenFileName(&ofn))
     {
         file = CreateFile(buf, GENERIC_READ, 0, NULL, OPEN_EXISTING, 0, NULL);
 
         if IS_INVALID(file)
         {
-            sprintf_s(g_lastMessage, LASTMSG_SIZE, "Could not open that file.");
+            snprintf(g_lastMessage, LASTMSG_SIZE, "Could not open that file.");
             return FALSE;
         }
 
-        FAIL_IF_NULL(KAO2_readFile(file, (LPVOID) buf, 0x08))
+        FAIL_IF_FALSE(KAO2_readFile(file, (LPVOID) buf, 0x08))
 
-        if NOT_NULL(memcmp(buf, TAS_BINFILE_HEADER, 0x08))
+        if NOT_ZERO(memcmp(buf, TAS_BINFILE_HEADER, 0x08))
         {
-            sprintf_s(g_lastMessage, LASTMSG_SIZE, "Invalid data file header! Expected \"%s\".", TAS_BINFILE_HEADER);
+            snprintf(g_lastMessage, LASTMSG_SIZE, "Invalid data file header! Expected \"%s\".", TAS_BINFILE_HEADER);
             CloseHandle(file);
             return FALSE;
         }
 
-        FAIL_IF_NULL(KAO2_readFile(file, (LPVOID) &b, 0x04))
+        FAIL_IF_FALSE(KAO2_readFile(file, (LPVOID) &b, 0x04))
 
         prev = NULL;
         new_head = NULL;
 
         for (a = 0; a < b; a++)
         {
-            FAIL_IF_NULL(KAO2_readFile(file, (LPVOID) &l_x, 0x04))
-            FAIL_IF_NULL(KAO2_readFile(file, (LPVOID) &l_y, 0x04))
-            FAIL_IF_NULL(KAO2_readFile(file, (LPVOID) &r_x, 0x04))
-            FAIL_IF_NULL(KAO2_readFile(file, (LPVOID) &r_y, 0x04))
-            FAIL_IF_NULL(KAO2_readFile(file, (LPVOID) &buttons, 0x02))
+            FAIL_IF_FALSE(KAO2_readFile(file, (LPVOID) &l_x, 0x04))
+            FAIL_IF_FALSE(KAO2_readFile(file, (LPVOID) &l_y, 0x04))
+            FAIL_IF_FALSE(KAO2_readFile(file, (LPVOID) &r_x, 0x04))
+            FAIL_IF_FALSE(KAO2_readFile(file, (LPVOID) &r_y, 0x04))
+            FAIL_IF_FALSE(KAO2_readFile(file, (LPVOID) &buttons, 0x02))
 
             frame = FrameNode_create(l_x, l_y, r_x, r_y, buttons, prev);
 
@@ -802,13 +856,15 @@ BOOL KAO2_binfileLoad()
 // KAO2 PROCESS HOOKING: Match possible EXE filename
 ////////////////////////////////////////////////////////////////
 
-BOOL KAO2_matchGameExecutableName(const char * filename)
+BOOL
+KAO2_matchGameExecutableName(
+    const char *filename)
 {
     const int NAMES = sizeof(KAO2_EXECUTABLE_NAMES) / sizeof(const char *);
 
     for (int i = 0; i < NAMES; i++)
     {
-        if IS_NULL(strcmp(filename, KAO2_EXECUTABLE_NAMES[i]))
+        if IS_ZERO(strcmp(filename, KAO2_EXECUTABLE_NAMES[i]))
         {
             return TRUE;
         }
@@ -821,7 +877,10 @@ BOOL KAO2_matchGameExecutableName(const char * filename)
 // KAO2 PROCESS HOOKING: Match the window with process ID
 ////////////////////////////////////////////////////////////////
 
-BOOL KAO2_matchGameWindowWithProccess(const HWND found_window, const DWORD found_pid)
+BOOL
+KAO2_matchGameWindowWithProccess(
+    const HWND found_window,
+    const DWORD found_pid)
 {
     DWORD pid = 0;
     GetWindowThreadProcessId(found_window, &pid);
@@ -834,24 +893,26 @@ BOOL KAO2_matchGameWindowWithProccess(const HWND found_window, const DWORD found
 //  and return special handle on success
 ////////////////////////////////////////////////////////////////
 
-VOID KAO2_findGameProcess()
+VOID
+KAO2_findGameProcess(
+    void)
 {
     HANDLE proc_handle;
     HWND glut_window;
     DWORD pids[ENUMERATED_PROCESSES], i, count;
-    char buf[BUF_SIZE], * file_name, * p;
+    char buf[BUF_SIZE], *file_name, *p;
 
     /* Find game window */
     if IS_NULL(glut_window = FindWindow(KAO2_WINDOW_CLASSNAME, KAO2_WINDOW_NAME))
     {
-        sprintf_s(g_lastMessage, LASTMSG_SIZE, "Could not locate \"%s\" window!", KAO2_WINDOW_NAME);
+        snprintf(g_lastMessage, LASTMSG_SIZE, "Could not locate \"%s\" window!", KAO2_WINDOW_NAME);
     }
     else
     {
         /* Enumerate processes */
         if (!EnumProcesses(pids, (sizeof(DWORD) * ENUMERATED_PROCESSES), &count))
         {
-            sprintf_s(g_lastMessage, LASTMSG_SIZE, "EnumProcesses() failed!");
+            snprintf(g_lastMessage, LASTMSG_SIZE, "EnumProcesses() failed!");
         }
         else
         {
@@ -888,7 +949,7 @@ VOID KAO2_findGameProcess()
                 }
             }
 
-            sprintf_s(g_lastMessage, LASTMSG_SIZE, "No process module filename matches the expected executable name!");
+            snprintf(g_lastMessage, LASTMSG_SIZE, "No process module filename matches the expected executable name!");
         }
     }
 
@@ -900,12 +961,14 @@ VOID KAO2_findGameProcess()
 // WINAPI GUI: Main window loop
 ////////////////////////////////////////////////////////////////
 
-BOOL KAO2_windowLoop()
+BOOL
+KAO2_windowLoop(
+    void)
 {
     BOOL still_active = TRUE;
     MSG message = {0};
 
-    while (PeekMessage(&message, NULL, 0, 0, PM_REMOVE))
+    while (PeekMessage(&(message), NULL, 0, 0, PM_REMOVE))
     {
         if EQ(WM_QUIT, message.message)
         {
@@ -923,13 +986,17 @@ BOOL KAO2_windowLoop()
 // WINAPI GUI: Updating EditBox control of Gamepad Stick co-ord
 ////////////////////////////////////////////////////////////////
 
-VOID KAO2_updateStickEdit(const FrameNode_t * frame, int id, int coord)
+VOID
+KAO2_updateStickEdit(
+    const FrameNode *frame,
+    int id,
+    int coord)
 {
     char buf[SMALL_BUF_SIZE];
 
     if NOT_NULL(frame)
     {
-        sprintf_s(buf, SMALL_BUF_SIZE, "%.7f", (frame->sticks[id][coord]));
+        snprintf(buf, SMALL_BUF_SIZE, "%.7f", (frame->sticks[id][coord]));
     }
     else
     {
@@ -944,7 +1011,11 @@ VOID KAO2_updateStickEdit(const FrameNode_t * frame, int id, int coord)
 // and optionally update associated EditBox [X][Y] controls
 ////////////////////////////////////////////////////////////////
 
-VOID KAO2_updateStickStaticAndEdits(const FrameNode_t * frame, int id, BOOL settext)
+VOID
+KAO2_updateStickStaticAndEdits(
+    const FrameNode *frame,
+    int id,
+    BOOL settext)
 {
     RedrawWindow(KAO2_staticBoxSticks[id], NULL, NULL, RDW_INVALIDATE);
 
@@ -960,9 +1031,13 @@ VOID KAO2_updateStickStaticAndEdits(const FrameNode_t * frame, int id, BOOL sett
 // for co-ords [LX][LY][RX][RY] of one of Gamepad Sticks
 ////////////////////////////////////////////////////////////////
 
-BOOL KAO2_stickEditNotify(HWND editbox, WORD notify, int id, int coord)
+BOOL
+KAO2_stickEditNotify(
+    HWND editbox,
+    WORD notify,
+    int id,
+    int coord)
 {
-    int a, b;
     char buf[SMALL_BUF_SIZE];
     float dummy;
 
@@ -996,7 +1071,9 @@ BOOL KAO2_stickEditNotify(HWND editbox, WORD notify, int id, int coord)
 // input-frame, and set according controls to given i-frame object
 ////////////////////////////////////////////////////////////////
 
-VOID KAO2_clearAndUpdateFrameGui(const FrameNode_t * frame)
+VOID
+KAO2_clearAndUpdateFrameGui(
+    const FrameNode *frame)
 {
     int i;
     WORD buttons;
@@ -1032,7 +1109,9 @@ VOID KAO2_clearAndUpdateFrameGui(const FrameNode_t * frame)
 // WINAPI GUI: Show quick text status after some operation
 ////////////////////////////////////////////////////////////////
 
-VOID KAO2_showStatus(const char * msg)
+VOID
+KAO2_showStatus(
+    const char *msg)
 {
     SetWindowText(KAO2_statusLabel, msg);
     /* UpdateWindow(KAO2_mainWindow); */
@@ -1042,15 +1121,17 @@ VOID KAO2_showStatus(const char * msg)
 // WINAPI GUI: Show error message
 ////////////////////////////////////////////////////////////////
 
-VOID KAO2_iAmError(const char * caption)
+VOID
+KAO2_iAmError(
+    const char *caption)
 {
     char buf[BUF_SIZE];
 
     KAO2_showStatus(caption);
 
-    if NOT_NULL(g_lastMessage[0])
+    if NOT_ZERO(g_lastMessage[0])
     {
-        sprintf_s(buf, BUF_SIZE, "%s\n\n%s", caption, g_lastMessage);
+        snprintf(buf, BUF_SIZE, "%s\n\n%s", caption, g_lastMessage);
 
         MessageBox(KAO2_mainWindow, buf, MSGBOX_ERROR_CAPTION, MB_ICONERROR);
     }
@@ -1060,11 +1141,28 @@ VOID KAO2_iAmError(const char * caption)
 // TOOL-ASSISTED MANIPULATION: Write bytes to Kao2 game process
 ////////////////////////////////////////////////////////////////
 
-BOOL KAO2_writeMem(DWORD address, LPCVOID from, size_t length)
+BOOL
+KAO2_writeMem(
+    DWORD address,
+    LPCVOID from,
+    size_t length)
 {
-    if (!WriteProcessMemory(KAO2_gameHandle, (LPVOID)address, from, length, NULL))
+    BOOL result = WriteProcessMemory(
+        KAO2_gameHandle,
+        (LPVOID) ((ULONG_PTR) address),
+        from,
+        length,
+        NULL);
+
+    if IS_FALSE(result)
     {
-        sprintf_s(g_lastMessage, LASTMSG_SIZE, "Could not write %d bytes to address 0x%08X!", length, address);
+        snprintf(
+            g_lastMessage,
+            LASTMSG_SIZE,
+            "Could not write %zu bytes to address 0x%08lX!",
+            length,
+            address);
+
         return FALSE;
     }
 
@@ -1075,11 +1173,28 @@ BOOL KAO2_writeMem(DWORD address, LPCVOID from, size_t length)
 // TOOL-ASSISTED MANIPULATION: Read bytes from Kao2 game process
 ////////////////////////////////////////////////////////////////
 
-BOOL KAO2_readMem(DWORD address, LPVOID into, size_t length)
+BOOL
+KAO2_readMem(
+    DWORD address,
+    LPVOID into,
+    size_t length)
 {
-    if (!ReadProcessMemory(KAO2_gameHandle, (LPVOID)address, into, length, NULL))
+    BOOL result = ReadProcessMemory(
+        KAO2_gameHandle,
+        (LPVOID) ((ULONG_PTR) address),
+        into,
+        length,
+        NULL);
+
+    if IS_FALSE(result)
     {
-        sprintf_s(g_lastMessage, LASTMSG_SIZE, "Could not read %d bytes from address 0x%08X!", length, address);
+        snprintf(
+            g_lastMessage,
+            LASTMSG_SIZE,
+            "Could not read %zu bytes from address 0x%08lX!",
+            length,
+            address);
+
         return FALSE;
     }
 
@@ -1091,7 +1206,9 @@ BOOL KAO2_readMem(DWORD address, LPVOID into, size_t length)
 // synchronization code into "Kao the Kangaroo: Round 2" (retail)
 ////////////////////////////////////////////////////////////////
 
-LONG KAO2_frameruleInjection()
+LONG
+KAO2_frameruleInjection(
+    void)
 {
     const FLOAT updatePortion = g_updateFramePortion;
     const FLOAT stepTime      = (updatePortion / KAO2_ANIM_FPS);
@@ -1119,7 +1236,10 @@ LONG KAO2_frameruleInjection()
 // updating sycnrhonization code.
 ////////////////////////////////////////////////////////////////
 
-VOID KAO2_frameruleInjectionPrepare(BOOL sendCode, float fps)
+VOID
+KAO2_frameruleInjectionPrepare(
+    BOOL sendCode,
+    float fps)
 {
     char buf[BUF_SIZE];
     LONG a = FALSE;
@@ -1138,18 +1258,18 @@ VOID KAO2_frameruleInjectionPrepare(BOOL sendCode, float fps)
 
     if (a)
     {
-        sprintf_s(buf, BUF_SIZE, "%.2f", fps);
+        snprintf(buf, BUF_SIZE, "%.2f", fps);
         SetWindowText(KAO2_frameRuleEditBox, buf);
     }
 
     fp = (KAO2_ANIM_FPS / fps);
     a = (LONG) (fps / KAO2_MIN_FPS);  // ((1.0 / fp) * (KAO2_ANIM_FPS / KAO2_MIN_FPS))
 
-    sprintf_s
-    (
-        buf, BUF_SIZE,
+    snprintf(
+        buf,
+        BUF_SIZE,
             "| Anim-frame portion per update: | %.5f of 1.0 |\n"
-            "| Max updates per Display Callback (delta %.2f s): | %4i |\n"
+            "| Max updates per Display Callback (delta %.2f s): | %4li |\n"
             "| Frame advance on lowest (%d FPS) framerate: | %.5f |",
         fp, (1.0 / KAO2_MIN_FPS), a, KAO2_MIN_FPS, (a * fp)
     );
@@ -1169,9 +1289,11 @@ VOID KAO2_frameruleInjectionPrepare(BOOL sendCode, float fps)
 // switching Tool-Assisted Modes.
 ////////////////////////////////////////////////////////////////
 
-BOOL KAO2_nextInjections()
+BOOL
+KAO2_nextInjections(
+    void)
 {
-    const BYTE * code;
+    const BYTE *code;
     size_t length;
 
     /* InputManager - Semaphore unlock */
@@ -1192,7 +1314,7 @@ BOOL KAO2_nextInjections()
         length = sizeof(KAO2_INJECTION_PLAYMODE);
     }
 
-    FAIL_IF_NULL(KAO2_writeMem(KAO2_CODE_INPUTS_ADDRESS, (LPCVOID)code, length))
+    FAIL_IF_FALSE(KAO2_writeMem(KAO2_CODE_INPUTS_ADDRESS, (LPCVOID)code, length))
 
     /* Continue injecting new code... :) */
 
@@ -1204,7 +1326,8 @@ BOOL KAO2_nextInjections()
 // of "Kao the Kangaroo: Round 2" for usage with this cool tool
 ////////////////////////////////////////////////////////////////
 
-BOOL KAO2_firstInjection()
+BOOL KAO2_firstInjection(
+    void)
 {
     /* eAnimNotyfier::onUpdate() - fix double notifies */
 
@@ -1229,13 +1352,15 @@ BOOL KAO2_firstInjection()
 // TOOL-ASSISTED MANIPULATION: Recording input frames
 ////////////////////////////////////////////////////////////////
 
-BOOL KAO2_runRecordingAlgorithm()
+BOOL
+KAO2_runRecordingAlgorithm(
+    void)
 {
-    DWORD a, b, rec = TRUE;
+    DWORD a, rec = TRUE;
     char buf[BUF_SIZE];
     BYTE flag;
-    FrameNode_t dummy;
-    FrameNode_t * dynamic_frame;
+    FrameNode dummy;
+    FrameNode *dynamic_frame;
 
     /* Remove current set of i-frames... */
 
@@ -1252,14 +1377,14 @@ BOOL KAO2_runRecordingAlgorithm()
 
         a = (1 + g_totalFrames);
 
-        sprintf_s(buf, MEDIUM_BUF_SIZE, KAO2_TASMSG_REC, a);
+        snprintf(buf, MEDIUM_BUF_SIZE, KAO2_TASMSG_REC, a);
         TAS_MACRO_INJECT_STR(buf, KAO2_TASMSG_ADDRESS)
 
         TAS_MACRO_RECORDING_MSG("");
 
         /* Is this loading mode? */
 
-        FAIL_IF_NULL(KAO2_readMem(KAO2_LOADING_FLAG_ADDRESS, &flag, 0x01))
+        FAIL_IF_FALSE(KAO2_readMem(KAO2_LOADING_FLAG_ADDRESS, &flag, 0x01))
 
         if IS_ONE(flag)
         {
@@ -1300,7 +1425,7 @@ BOOL KAO2_runRecordingAlgorithm()
                 /* Step-by-step mode was disabled before this request */
                 /* was sent. Read inputs prepared by the game. */
 
-                FAIL_IF_NULL(FrameNode_readFromGame(& dummy))
+                FAIL_IF_FALSE(FrameNode_readFromGame(&(dummy)))
 
                 /* Present input frame in GUI */
 
@@ -1339,7 +1464,7 @@ BOOL KAO2_runRecordingAlgorithm()
 
                 /* Replace in-game input status */
 
-                FAIL_IF_NULL(FrameNode_writeToGame(& dummy))
+                FAIL_IF_FALSE(FrameNode_writeToGame(& dummy))
             }
         }
 
@@ -1381,9 +1506,11 @@ BOOL KAO2_runRecordingAlgorithm()
 // TOOL-ASSISTED MANIPULATION: Replaying input frames
 ////////////////////////////////////////////////////////////////
 
-BOOL KAO2_runReplayingAlgorithm()
+BOOL
+KAO2_runReplayingAlgorithm(
+    void)
 {
-    DWORD a, b, counter = 1;
+    DWORD counter = 1;
     char buf[SMALL_BUF_SIZE];
     BYTE flag;
 
@@ -1393,7 +1520,7 @@ BOOL KAO2_runReplayingAlgorithm()
     {
         /* Micro message */
 
-        sprintf_s(buf, SMALL_BUF_SIZE, KAO2_TASMSG_PLAY, counter, g_totalFrames);
+        snprintf(buf, SMALL_BUF_SIZE, KAO2_TASMSG_PLAY, counter, g_totalFrames);
         TAS_MACRO_INJECT_STR(buf, KAO2_TASMSG_ADDRESS)
 
         /* Present input frame in GUI */
@@ -1433,7 +1560,7 @@ BOOL KAO2_runReplayingAlgorithm()
 
             /* Send data for this input-frame */
 
-            FAIL_IF_NULL(FrameNode_writeToGame(g_currentFrame))
+            FAIL_IF_FALSE(FrameNode_writeToGame(g_currentFrame))
         }
 
         /* The game will unfreeze once the the next iteration */
@@ -1461,7 +1588,10 @@ BOOL KAO2_runReplayingAlgorithm()
 // WINAPI GUI: Direction sense for given Gamepad Stick co-ords
 ////////////////////////////////////////////////////////////////
 
-const char * KAO2_getDirectionText(float x, float y)
+const char *
+KAO2_getDirectionText(
+    float x,
+    float y)
 {
     double length = sqrt(x * x + y * y);
     double angle = (atan2(y, x) / M_PI * 180.0) + 180.0;
@@ -1513,10 +1643,13 @@ const char * KAO2_getDirectionText(float x, float y)
 // WINAPI GUI: Genrating short-hand text for ListBox control
 ////////////////////////////////////////////////////////////////
 
-VOID KAO2_genInputFrameText(char * result, FrameNode_t * frame, int id)
+VOID
+KAO2_genInputFrameText(
+    char *result,
+    FrameNode *frame,
+    int id)
 {
-    sprintf_s
-    (
+    snprintf(
         result, BUF_SIZE, "(%5d/%5d) [%s] [%s] %c%c%c%c %s %s %s %s %s %s %s [%s]",
             (1 + id), g_totalFrames,
             KAO2_getDirectionText(frame->sticks[0][0], frame->sticks[0][1]),
@@ -1540,7 +1673,9 @@ VOID KAO2_genInputFrameText(char * result, FrameNode_t * frame, int id)
 // WINAPI GUI: Changing and/or refreshing a page of i-frames
 ////////////////////////////////////////////////////////////////
 
-VOID KAO2_LB_refreshFrameListBox(int direction)
+VOID
+KAO2_LB_refreshFrameListBox(
+    int direction)
 {
     const int pages = (g_totalFrames + FRAMES_PER_PAGE - 1) / FRAMES_PER_PAGE;
 
@@ -1548,7 +1683,7 @@ VOID KAO2_LB_refreshFrameListBox(int direction)
     int id;
 
     char buf[BUF_SIZE];
-    FrameNode_t * frame;
+    FrameNode *frame;
 
     if EQ(LEFT, direction)
     {
@@ -1584,55 +1719,8 @@ VOID KAO2_LB_refreshFrameListBox(int direction)
         counter--;
     }
 
-    sprintf_s(buf, BUF_SIZE, "(page %3d of %3d)", (1 + g_currentPage), pages);
+    snprintf(buf, BUF_SIZE, "(page %3d of %3d)", (1 + g_currentPage), pages);
     SetWindowText(KAO2_listBoxStatus, buf);
-}
-
-////////////////////////////////////////////////////////////////
-// WINAPI GUI: After selecting or changing an item in the ListBox
-////////////////////////////////////////////////////////////////
-
-VOID KAO2_LB_selectInputFrameOrUpdateGui(int lb_id, BOOL update)
-{
-    int i;
-    char buf[BUF_SIZE];
-
-    if (IS_NULL(g_currentFrame) && (lb_id >= 0))
-    {
-        g_currentFrameId = lb_id + g_currentPage * FRAMES_PER_PAGE;
-        g_currentFrame = FrameNode_getIth(g_frames, g_currentFrameId);
-    }
-    else if (lb_id < 0)
-    {
-        /* Will return (-1) if there are no frames left. */
-        lb_id = KAO2_LB_getIndexAndAdjustPage();
-    }
-
-    if (lb_id >= 0)
-    {
-        if (update)
-        {
-            SendMessage(KAO2_listBoxFrames, LB_DELETESTRING, (WPARAM) lb_id, (LPARAM) NULL);
-
-            KAO2_genInputFrameText(buf, g_currentFrame, g_currentFrameId);
-
-            SendMessage(KAO2_listBoxFrames, LB_INSERTSTRING, (WPARAM) lb_id, (LPARAM) buf);
-
-            SendMessage(KAO2_listBoxFrames, LB_SETCURSEL, (WPARAM) lb_id, (LPARAM) NULL);
-
-            sprintf_s(buf, BUF_SIZE, "(Updated frame #%05d)", (1 + g_currentFrameId));
-        }
-        else
-        {
-            SendMessage(KAO2_listBoxFrames, LB_SETCURSEL, (WPARAM) lb_id, (LPARAM) NULL);
-
-            sprintf_s(buf, BUF_SIZE, "(Selected frame #%05d)", (1 + g_currentFrameId));
-        }
-
-        SetWindowText(KAO2_listBoxStatus, buf);
-    }
-
-    KAO2_clearAndUpdateFrameGui(g_currentFrame);
 }
 
 ////////////////////////////////////////////////////////////////
@@ -1640,7 +1728,9 @@ VOID KAO2_LB_selectInputFrameOrUpdateGui(int lb_id, BOOL update)
 // relative to currently shown page in ListBox control
 ////////////////////////////////////////////////////////////////
 
-int KAO2_LB_getIndexAndAdjustPage()
+int
+KAO2_LB_getIndexAndAdjustPage(
+    void)
 {
     int i = (-1);
 
@@ -1670,14 +1760,65 @@ int KAO2_LB_getIndexAndAdjustPage()
 }
 
 ////////////////////////////////////////////////////////////////
+// WINAPI GUI: After selecting or changing an item in the ListBox
+////////////////////////////////////////////////////////////////
+
+VOID
+KAO2_LB_selectInputFrameOrUpdateGui(
+    int lb_id,
+    BOOL update)
+{
+    char buf[BUF_SIZE];
+
+    if (IS_NULL(g_currentFrame) && (lb_id >= 0))
+    {
+        g_currentFrameId = lb_id + g_currentPage * FRAMES_PER_PAGE;
+        g_currentFrame = FrameNode_getIth(g_frames, g_currentFrameId);
+    }
+    else if (lb_id < 0)
+    {
+        /* Will return (-1) if there are no frames left. */
+        lb_id = KAO2_LB_getIndexAndAdjustPage();
+    }
+
+    if (lb_id >= 0)
+    {
+        if (update)
+        {
+            SendMessage(KAO2_listBoxFrames, LB_DELETESTRING, (WPARAM) lb_id, (LPARAM) NULL);
+
+            KAO2_genInputFrameText(buf, g_currentFrame, g_currentFrameId);
+
+            SendMessage(KAO2_listBoxFrames, LB_INSERTSTRING, (WPARAM) lb_id, (LPARAM) buf);
+
+            SendMessage(KAO2_listBoxFrames, LB_SETCURSEL, (WPARAM) lb_id, (LPARAM) NULL);
+
+            snprintf(buf, BUF_SIZE, "(Updated frame #%05d)", (1 + g_currentFrameId));
+        }
+        else
+        {
+            SendMessage(KAO2_listBoxFrames, LB_SETCURSEL, (WPARAM) lb_id, (LPARAM) NULL);
+
+            snprintf(buf, BUF_SIZE, "(Selected frame #%05d)", (1 + g_currentFrameId));
+        }
+
+        SetWindowText(KAO2_listBoxStatus, buf);
+    }
+
+    KAO2_clearAndUpdateFrameGui(g_currentFrame);
+}
+
+////////////////////////////////////////////////////////////////
 // WINAPI GUI: Insert new input frame
 // (cloning data from preceding i-frame)
 ////////////////////////////////////////////////////////////////
 
-VOID KAO2_LB_insertNewInputFrame()
+VOID
+KAO2_LB_insertNewInputFrame(
+    void)
 {
     char buf[SMALL_BUF_SIZE];
-    FrameNode_t * prev_frame;
+    FrameNode *prev_frame;
 
     if IS_NULL(g_frames)
     {
@@ -1720,7 +1861,7 @@ VOID KAO2_LB_insertNewInputFrame()
         g_totalFrames++;
     }
 
-    sprintf_s(buf, SMALL_BUF_SIZE, "Inserted frame #%03d.", (1 + g_currentFrameId));
+    snprintf(buf, SMALL_BUF_SIZE, "Inserted frame #%03d.", (1 + g_currentFrameId));
     SetWindowText(KAO2_listBoxStatus, buf);
 
     KAO2_LB_refreshFrameListBox(-1);
@@ -1732,13 +1873,15 @@ VOID KAO2_LB_insertNewInputFrame()
 // and rearranging the main list
 ////////////////////////////////////////////////////////////////
 
-BOOL KAO2_LB_removeCurrentInputFrame()
+BOOL
+KAO2_LB_removeCurrentInputFrame(
+    void)
 {
     int i = (1 + g_currentFrameId);
     char buf[BUF_SIZE];
 
-    FrameNode_t * prev_frame;
-    FrameNode_t * next_frame;
+    FrameNode *prev_frame;
+    FrameNode *next_frame;
 
     if NOT_NULL(g_currentFrame)
     {
@@ -1751,7 +1894,7 @@ BOOL KAO2_LB_removeCurrentInputFrame()
 
             (prev_frame->next) = next_frame;
         }
-        else if (IS_NULL(prev_frame) && IS_NULL(g_currentFrameId))
+        else if (IS_NULL(prev_frame) && IS_ZERO(g_currentFrameId))
         {
             /* Must be the first frame */
 
@@ -1802,7 +1945,7 @@ BOOL KAO2_LB_removeCurrentInputFrame()
         KAO2_LB_refreshFrameListBox(-1);
         KAO2_LB_selectInputFrameOrUpdateGui((-1), FALSE);
 
-        sprintf_s(buf, BUF_SIZE, "(Deleted frame #%05d)", i);
+        snprintf(buf, BUF_SIZE, "(Deleted frame #%05d)", i);
         SetWindowText(KAO2_listBoxStatus, buf);
     }
 
@@ -1814,17 +1957,20 @@ BOOL KAO2_LB_removeCurrentInputFrame()
 // that give the sense of direction for Gamepad Sticks
 ////////////////////////////////////////////////////////////////
 
-LRESULT CALLBACK KAO2_winProcAnyStick(int id, HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam)
+LRESULT CALLBACK
+KAO2_winProcAnyStick(
+    int id,
+    HWND hWnd,
+    UINT Msg,
+    WPARAM wParam,
+    LPARAM lParam)
 {
     PAINTSTRUCT ps;
-    HRGN bgRgn;
     RECT rect;
 
-    POINT pt, halves, line_start, line_end;
+    POINT pt, halves, line_end;
     LONG i;
     struct { FLOAT x; FLOAT y; } fp;
-
-    char buf[BUF_SIZE];
 
     switch (Msg)
     {
@@ -1858,7 +2004,7 @@ LRESULT CALLBACK KAO2_winProcAnyStick(int id, HWND hWnd, UINT Msg, WPARAM wParam
                 /* Notice how Left Stick is inverted on Y-axis, */
                 /* while the Right Stick is not! */
                 line_end.x = halves.x + ((int)fp.x);
-                line_end.y = halves.y + (IS_NULL(id) ? (-1) : 1) * ((int) fp.y);
+                line_end.y = halves.y + (IS_ZERO(id) ? (-1) : 1) * ((int) fp.y);
 
                 for (i = 0; i < (2 * 2); i++)
                 {
@@ -1899,7 +2045,7 @@ LRESULT CALLBACK KAO2_winProcAnyStick(int id, HWND hWnd, UINT Msg, WPARAM wParam
                     fp.y = ((pt.y - rect.top) - fp.y) / (fp.y - 4);
 
                     g_currentFrame->sticks[id][0] = fp.x;
-                    g_currentFrame->sticks[id][1] = (IS_NULL(id) ? (-1) : 1) * fp.y;
+                    g_currentFrame->sticks[id][1] = (IS_ZERO(id) ? (-1) : 1) * fp.y;
 
                     KAO2_LB_selectInputFrameOrUpdateGui((-1), TRUE);
                 }
@@ -1917,7 +2063,12 @@ LRESULT CALLBACK KAO2_winProcAnyStick(int id, HWND hWnd, UINT Msg, WPARAM wParam
 // for Static control of the Left Gamepad Stick
 ////////////////////////////////////////////////////////////////
 
-LRESULT CALLBACK KAO2_winProcLeftStick(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam)
+LRESULT CALLBACK
+KAO2_winProcLeftStick(
+    HWND hWnd,
+    UINT Msg,
+    WPARAM wParam,
+    LPARAM lParam)
 {
     return KAO2_winProcAnyStick(LEFT, hWnd, Msg, wParam, lParam);
 }
@@ -1927,7 +2078,12 @@ LRESULT CALLBACK KAO2_winProcLeftStick(HWND hWnd, UINT Msg, WPARAM wParam, LPARA
 // for Static control of the Right Gamepad Stick
 ////////////////////////////////////////////////////////////////
 
-LRESULT CALLBACK KAO2_winProcRightStick(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam)
+LRESULT CALLBACK
+KAO2_winProcRightStick(
+    HWND hWnd,
+    UINT Msg,
+    WPARAM wParam,
+    LPARAM lParam)
 {
     return KAO2_winProcAnyStick(RIGHT, hWnd, Msg, wParam, lParam);
 }
@@ -1937,7 +2093,12 @@ LRESULT CALLBACK KAO2_winProcRightStick(HWND hWnd, UINT Msg, WPARAM wParam, LPAR
 // for accepting input in an EditBox control
 ////////////////////////////////////////////////////////////////
 
-LRESULT CALLBACK KAO2_winProcEditFramerule(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam)
+LRESULT CALLBACK
+KAO2_winProcEditFramerule(
+    HWND hWnd,
+    UINT Msg,
+    WPARAM wParam,
+    LPARAM lParam)
 {
     char buf[SMALL_BUF_SIZE];
     float fps;
@@ -1972,7 +2133,12 @@ LRESULT CALLBACK KAO2_winProcEditFramerule(HWND hWnd, UINT Msg, WPARAM wParam, L
 // WINAPI GUI: Callback procedure for the main window of this tool
 ////////////////////////////////////////////////////////////////
 
-LRESULT CALLBACK KAO2_windowProcedure(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam)
+LRESULT CALLBACK
+KAO2_windowProcedure(
+    HWND hWnd,
+    UINT Msg,
+    WPARAM wParam,
+    LPARAM lParam)
 {
     BOOL check_more_buttons = TRUE;
     DWORD a, b;
@@ -2143,7 +2309,7 @@ LRESULT CALLBACK KAO2_windowProcedure(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM
                         MACRO_ASSERT_GAME_HANDLE
                         else if (KAO2_nextInjections())
                         {
-                            sprintf_s(buf, MEDIUM_BUF_SIZE, "TAS mode changed to RE%s :)", (a ? "CORDING" : "PLAY"));
+                            snprintf(buf, MEDIUM_BUF_SIZE, "TAS mode changed to RE%s :)", (a ? "CORDING" : "PLAY"));
                             KAO2_showStatus(buf);
                         }
                         else
@@ -2484,7 +2650,9 @@ LRESULT CALLBACK KAO2_windowProcedure(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM
 // WINAPI GUI: Creating all windows and controls
 ////////////////////////////////////////////////////////////////
 
-BOOL KAO2_createWindows(HINSTANCE hInstance)
+BOOL
+KAO2_createWindows(
+    HINSTANCE hInstance)
 {
     HWND test_window;
     WNDCLASSEX window_class;
@@ -2525,7 +2693,7 @@ BOOL KAO2_createWindows(HINSTANCE hInstance)
     window_class.lpfnWndProc = KAO2_windowProcedure;
     window_class.lpszClassName = KAO2TAS_WINDOW_CLASSNAME;
 
-    FAIL_IF_NULL(RegisterClassEx(&window_class))
+    FAIL_IF_FALSE(RegisterClassEx(&(window_class)))
 
     /* Create fonts */
 
@@ -2601,14 +2769,15 @@ BOOL KAO2_createWindows(HINSTANCE hInstance)
             "BUTTON", UPPER_BUTTON_NAMES[i],
             WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON,
             x, y, BUTTON_WIDTH, BUTTON_HEIGHT,
-            KAO2_mainWindow, (HMENU)(IDM_BUTTON_ATTACH + i), hInstance, NULL
+            KAO2_mainWindow, (HMENU) ((ULONG_PTR) (IDM_BUTTON_ATTACH + i)),
+            hInstance, NULL
         );
 
         CHECK_WINDOW_AND_SET_FONT(test_window, KAO2_font01);
 
         i++;
 
-        if IS_NULL(i % UPPER_BUTTONS_PER_ROW)
+        if IS_ZERO(i % UPPER_BUTTONS_PER_ROW)
         {
             x = PADDING;
             y += (BUTTON_HEIGHT + PADDING);
@@ -2632,7 +2801,8 @@ BOOL KAO2_createWindows(HINSTANCE hInstance)
             "BUTTON", UPPER_CHECKBOX_NAMES[i],
             WS_VISIBLE | WS_CHILD | BS_AUTOCHECKBOX,
             x, y, WINDOW_WIDTH_WO_PADDING, LABEL_HEIGHT,
-            KAO2_mainWindow, (HMENU)(IDM_CHECK_MODE + i), hInstance, NULL
+            KAO2_mainWindow, (HMENU) ((ULONG_PTR) (IDM_CHECK_MODE + i)),
+            hInstance, NULL
         );
 
         CHECK_WINDOW_AND_SET_FONT(test_window, KAO2_font01);
@@ -2649,7 +2819,8 @@ BOOL KAO2_createWindows(HINSTANCE hInstance)
         WS_EX_CLIENTEDGE, "EDIT", "",
         WS_VISIBLE | WS_CHILD | ES_LEFT,
         x, y, x2, BUTTON_HEIGHT,
-        KAO2_mainWindow, (HMENU) IDM_EDIT_FRAMERULE, hInstance, NULL
+        KAO2_mainWindow, (HMENU) ((ULONG_PTR) IDM_EDIT_FRAMERULE),
+        hInstance, NULL
     );
 
     CHECK_WINDOW_AND_SET_FONT(KAO2_frameRuleEditBox, KAO2_font01);
@@ -2697,7 +2868,8 @@ BOOL KAO2_createWindows(HINSTANCE hInstance)
             "BUTTON", OTHER_BUTTON_NAMES[i],
             WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON,
             x, y, BUTTON_HEIGHT, LABEL_HEIGHT,
-            KAO2_mainWindow, (HMENU)(IDM_BUTTON_PREV_PAGE + i), hInstance, NULL
+            KAO2_mainWindow, (HMENU) ((ULONG_PTR) (IDM_BUTTON_PREV_PAGE + i)),
+            hInstance, NULL
         );
 
         CHECK_WINDOW_AND_SET_FONT(test_window, KAO2_font01);
@@ -2730,7 +2902,8 @@ BOOL KAO2_createWindows(HINSTANCE hInstance)
             "BUTTON", OTHER_BUTTON_NAMES[2 + i],
             WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON,
             x, y, BUTTON_HEIGHT, LABEL_HEIGHT,
-            KAO2_mainWindow, (HMENU)(IDM_BUTTON_INSERT_FRAME + i), hInstance, NULL
+            KAO2_mainWindow, (HMENU) ((ULONG_PTR) (IDM_BUTTON_INSERT_FRAME + i)),
+            hInstance, NULL
         );
 
         CHECK_WINDOW_AND_SET_FONT(test_window, KAO2_font01);
@@ -2820,14 +2993,15 @@ BOOL KAO2_createWindows(HINSTANCE hInstance)
             "BUTTON", FRAME_PARAM_NAMES[i],
             WS_VISIBLE | WS_CHILD | BS_AUTOCHECKBOX,
             x, y, OPTION_WIDTH, LABEL_HEIGHT,
-            KAO2_mainWindow, (HMENU)(IDM_BUTTON_FRAME_PARAM + i), hInstance, NULL
+            KAO2_mainWindow, (HMENU) ((ULONG_PTR) (IDM_BUTTON_FRAME_PARAM + i)),
+            hInstance, NULL
         );
 
         CHECK_WINDOW_AND_SET_FONT(KAO2_checkBoxParams[i], KAO2_font01);
 
         i++;
 
-        if IS_NULL(i % 8)
+        if IS_ZERO(i % 8)
         {
             x += (OPTION_WIDTH + PADDING);
             y -= 7 * (LABEL_HEIGHT + PADDING);
@@ -2851,7 +3025,12 @@ BOOL KAO2_createWindows(HINSTANCE hInstance)
 // WINAPI: Entry point of the application
 ////////////////////////////////////////////////////////////////
 
-int CALLBACK WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _In_ LPSTR lpCmdLine, _In_ int nCmdShow)
+int CALLBACK
+WinMain(
+    _In_ HINSTANCE hInstance,
+    _In_opt_ HINSTANCE hPrevInstance,
+    _In_ LPSTR lpCmdLine,
+    _In_ int nCmdShow)
 {
     DWORD i;
 
@@ -2907,9 +3086,13 @@ int CALLBACK WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance,
 
     /* Starting the program */
 
-    if (!KAO2_createWindows(hInstance))
+    if IS_FALSE(KAO2_createWindows(hInstance))
     {
-        MessageBox(NULL, "Could not create the application window!", MSGBOX_ERROR_CAPTION, MB_ICONERROR);
+        MessageBox(
+            NULL,
+            "Could not create the application window!",
+            MSGBOX_ERROR_CAPTION,
+            MB_ICONERROR);
     }
     else
     {

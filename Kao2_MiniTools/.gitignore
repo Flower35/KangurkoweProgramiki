@@ -1,0 +1,7 @@
+
+.vscode/*
+.dccache
+
+bin/*
+lib/*
+res/out/*
