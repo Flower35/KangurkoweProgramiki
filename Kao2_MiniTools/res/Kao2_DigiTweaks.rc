@@ -1,0 +1,20 @@
+MAINICON ICON "Kao2_DigiTweaks.ico"
+
+1 VERSIONINFO
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "041504E4"
+    BEGIN
+      VALUE "FileDescription", "Kao2 DigiTweaks"
+      // VALUE "ProductName", ""
+      // VALUE "FileVersion", ""
+      // VALUE "InternalName", "Kao2_DigiTweaks"
+      // VALUE "OriginalFilename", "Kao2_DigiTweaks.exe"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x0415, 0x04E4
+  END
+END

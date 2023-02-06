@@ -8,15 +8,24 @@ IF NOT ERRORLEVEL 1 GOTO MAKE_START
 :MAKE_START
     if NOT []==[%1] GOTO MAKE_ARGS_LOOP
     ECHO Available "make" arguments:
+    ECHO.
     ECHO * all
+    ECHO.
     ECHO * tas_win32-release
     ECHO * tas_win32-debug
     ECHO * tas_win64-release
     ECHO * tas_win64-debug
-    ECHO * gi_win32-release
-    ECHO * gi_win32-debug
-    ECHO * gi_win64-release
-    ECHO * gi_win64-debug
+    ECHO.
+    ECHO * gameinfo_win32-release
+    ECHO * gameinfo_win32-debug
+    ECHO * gameinfo_win64-release
+    ECHO * gameinfo_win64-debug
+    ECHO.
+    ECHO * digitweaks_win32-release
+    ECHO * digitweaks_win32-debug
+    ECHO * digitweaks_win64-release
+    ECHO * digitweaks_win64-debug
+    ECHO.
     ECHO * clean
     GOTO DONE
 
@@ -36,10 +45,15 @@ IF NOT ERRORLEVEL 1 GOTO MAKE_START
     IF [tas_win64-release]==[%1] GOTO START_KAO2TAS_WIN64_RELEASE
     IF [tas_win64-debug]==[%1]   GOTO START_KAO2TAS_WIN64_DEBUG
     
-    IF [gi_win32-release]==[%1]  GOTO START_KAO2GI_WIN32_RELEASE
-    IF [gi_win32-debug]==[%1]    GOTO START_KAO2GI_WIN32_DEBUG
-    IF [gi_win64-release]==[%1]  GOTO START_KAO2GI_WIN64_RELEASE
-    IF [gi_win64-debug]==[%1]    GOTO START_KAO2GI_WIN64_DEBUG
+    IF [gameinfo_win32-release]==[%1]  GOTO START_KAO2GAMEINFO_WIN32_RELEASE
+    IF [gameinfo_win32-debug]==[%1]    GOTO START_KAO2GAMEINFO_WIN32_DEBUG
+    IF [gameinfo_win64-release]==[%1]  GOTO START_KAO2GAMEINFO_WIN64_RELEASE
+    IF [gameinfo_win64-debug]==[%1]    GOTO START_KAO2GAMEINFO_WIN64_DEBUG
+    
+    IF [digitweaks_win32-release]==[%1]  GOTO START_KAO2DIGITWEAKS_WIN32_RELEASE
+    IF [digitweaks_win32-debug]==[%1]    GOTO START_KAO2DIGITWEAKS_WIN32_DEBUG
+    IF [digitweaks_win64-release]==[%1]  GOTO START_KAO2DIGITWEAKS_WIN64_RELEASE
+    IF [digitweaks_win64-debug]==[%1]    GOTO START_KAO2DIGITWEAKS_WIN64_DEBUG
     
     IF [clean]==[%1]             GOTO START_CLEANING
     ECHO * Unrecognized argument "%1"
@@ -50,7 +64,7 @@ IF NOT ERRORLEVEL 1 GOTO MAKE_START
 :RMDIR
     IF NOT EXIST %1 GOTO DONE
     ECHO Removing the %1 directory...
-    RD /S /Q %1 2>NUL
+    DEL /S /Q %1\*.o %1\*.inc %1\*.res %1\*.exe 2>NUL
     GOTO DONE
 
 :START_CLEANING
@@ -75,7 +89,7 @@ IF NOT ERRORLEVEL 1 GOTO MAKE_START
     SET CFLAGS=-Wall -pedantic-errors
 
     :: Windows Subsystem ("kernel32" and "user32" are somehow linked "by default")
-    SET LDFLAGS=-Wl,--subsystem,windows
+    SET LDFLAGS=-Wl,--subsystem,%SUBSYSTEM%
 
     GOTO DONE
 
@@ -111,13 +125,22 @@ IF NOT ERRORLEVEL 1 GOTO MAKE_START
 
 :USING_KAO2TAS
     SET TARGET=Kao2_TAS
+    SET SUBSYSTEM=windows
     SET SRCDIR=sources\Kao2_TAS
     SET LIBRARIES=-lgdi32 -lcomdlg32
     GOTO DONE
     
-:USING_KAO2GI
+:USING_KAO2GAMEINFO
     SET TARGET=Kao2_GameInfo
+    SET SUBSYSTEM=windows
     SET SRCDIR=sources\Kao2_GameInfo
+    SET LIBRARIES=-lgdi32 
+    GOTO DONE
+
+:USING_KAO2DIGITWEAKS
+    SET TARGET=Kao2_DigiTweaks
+    SET SUBSYSTEM=windows
+    SET SRCDIR=sources\Kao2_DigiTweaks
     SET LIBRARIES=-lgdi32 
     GOTO DONE
 
@@ -152,10 +175,15 @@ IF NOT ERRORLEVEL 1 GOTO MAKE_START
     CALL :START_KAO2TAS_WIN64_RELEASE
     CALL :START_KAO2TAS_WIN64_DEBUG
     
-    CALL :START_KAO2GI_WIN32_RELEASE
-    CALL :START_KAO2GI_WIN32_DEBUG
-    CALL :START_KAO2GI_WIN64_RELEASE
-    CALL :START_KAO2GI_WIN64_DEBUG
+    CALL :START_KAO2GAMEINFO_WIN32_RELEASE
+    CALL :START_KAO2GAMEINFO_WIN32_DEBUG
+    CALL :START_KAO2GAMEINFO_WIN64_RELEASE
+    CALL :START_KAO2GAMEINFO_WIN64_DEBUG
+    
+    CALL :START_KAO2DIGITWEAKS_WIN32_RELEASE
+    CALL :START_KAO2DIGITWEAKS_WIN32_DEBUG
+    CALL :START_KAO2DIGITWEAKS_WIN64_RELEASE
+    CALL :START_KAO2DIGITWEAKS_WIN64_DEBUG
     
     GOTO MAKE_NEXT_ARG
 
@@ -187,26 +215,52 @@ IF NOT ERRORLEVEL 1 GOTO MAKE_START
 
 ::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
 
-:START_KAO2GI_WIN32_RELEASE
-    CALL :USING_KAO2GI
+:START_KAO2GAMEINFO_WIN32_RELEASE
+    CALL :USING_KAO2GAMEINFO
     CALL :USING_PLATFORM_WIN32
     CALL :USING_BUILD_RELEASE
     GOTO VIBECHECK_1
 
-:START_KAO2GI_WIN32_DEBUG
-    CALL :USING_KAO2GI
+:START_KAO2GAMEINFO_WIN32_DEBUG
+    CALL :USING_KAO2GAMEINFO
     CALL :USING_PLATFORM_WIN32
     CALL :USING_BUILD_DEBUG
     GOTO VIBECHECK_1
 
-:START_KAO2GI_WIN64_RELEASE
-    CALL :USING_KAO2GI
+:START_KAO2GAMEINFO_WIN64_RELEASE
+    CALL :USING_KAO2GAMEINFO
     CALL :USING_PLATFORM_WIN64
     CALL :USING_BUILD_RELEASE
     GOTO VIBECHECK_1
 
-:START_KAO2GI_WIN64_DEBUG
-    CALL :USING_KAO2GI
+:START_KAO2GAMEINFO_WIN64_DEBUG
+    CALL :USING_KAO2GAMEINFO
+    CALL :USING_PLATFORM_WIN64
+    CALL :USING_BUILD_DEBUG
+    GOTO VIBECHECK_1
+
+::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+
+:START_KAO2DIGITWEAKS_WIN32_RELEASE
+    CALL :USING_KAO2DIGITWEAKS
+    CALL :USING_PLATFORM_WIN32
+    CALL :USING_BUILD_RELEASE
+    GOTO VIBECHECK_1
+
+:START_KAO2DIGITWEAKS_WIN32_DEBUG
+    CALL :USING_KAO2DIGITWEAKS
+    CALL :USING_PLATFORM_WIN32
+    CALL :USING_BUILD_DEBUG
+    GOTO VIBECHECK_1
+
+:START_KAO2DIGITWEAKS_WIN64_RELEASE
+    CALL :USING_KAO2DIGITWEAKS
+    CALL :USING_PLATFORM_WIN64
+    CALL :USING_BUILD_RELEASE
+    GOTO VIBECHECK_1
+
+:START_KAO2DIGITWEAKS_WIN64_DEBUG
+    CALL :USING_KAO2DIGITWEAKS
     CALL :USING_PLATFORM_WIN64
     CALL :USING_BUILD_DEBUG
     GOTO VIBECHECK_1
@@ -225,7 +279,7 @@ IF NOT ERRORLEVEL 1 GOTO MAKE_START
 
 :VIBECHECK_2
     WHERE windres.exe >NUL 2>NUL
-    IF NOT ERRORLEVEL 1 GOTO COMPILE_OBJ_FILES_1
+    IF NOT ERRORLEVEL 1 GOTO COMPILE_SPLASH_SCREEN_1
     ECHO * Error: "windres.exe" not installed!
     GOTO MAKE_NEXT_ARG
 
@@ -262,7 +316,31 @@ IF NOT ERRORLEVEL 1 GOTO MAKE_START
 
 ::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
 
+:COMPILE_SPLASH_SCREEN_1
+    IF NOT EXIST "res\%TARGET%_splash.bmp" GOTO COMPILE_OBJ_FILES_1
+    IF EXIST "res\out\bmp2inc.exe" GOTO COMPILE_SPLASH_SCREEN_2
+    IF NOT EXIST res\out\ MD res\out
+    ECHO.
+    ECHO Compiling "bmp2inc" mini-tool...
+    %CC% -O3 -o "res/out/bmp2inc.exe" "res/bmp2inc.c" -s -Wl,--subsystem,console
+    IF ERRORLEVEL 1 GOTO MAKE_NEXT_ARG
+    ECHO "res\out\bmp2inc.exe": OK!
+
+:COMPILE_SPLASH_SCREEN_2
+    IF EXIST "res\out\%TARGET%_splash.inc" GOTO COMPILE_SPLASH_SCREEN_OK
+    ECHO.
+    ECHO Converting "res\%TARGET%_splash.bmp" into "res\out\%TARGET%_splash.inc"...
+    "res\out\bmp2inc.exe" "res\%TARGET%_splash.bmp" "res\out\%TARGET%_splash.inc"
+    IF ERRORLEVEL 1 GOTO MAKE_NEXT_ARG
+    ECHO "res\out\%TARGET%_splash.inc": OK!
+
+:COMPILE_SPLASH_SCREEN_OK
+    SET CPPFLAGS=%CPPFLAGS% -I./res/out
+
+::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+
 :COMPILE_OBJ_FILES_1
+    ECHO.
     :: Creates same directory structure (source files to object files)
     XCOPY "%SRCDIR%\" "%TARGETDIR%\%TARGET%_obj\" /T
     IF NOT ERRORLEVEL 1 GOTO :COMPILE_OBJ_FILES_2
@@ -278,17 +356,17 @@ IF NOT ERRORLEVEL 1 GOTO MAKE_START
 ::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
 
 :COMPILE_RESOURCE
-    IF NOT EXIST "res/%TARGET%.rc" GOTO LINK_EXE
-    IF EXIST "res/out/%TARGET%.res" GOTO COMPILE_RESOURCE_OK
+    IF NOT EXIST "res\%TARGET%.rc" GOTO LINK_EXE
+    IF EXIST "res\out\%TARGET%.res" GOTO COMPILE_RESOURCE_OK
     IF NOT EXIST res\out\ MD res\out
     ECHO.
-    ECHO Creating Windows resource "res/out/%TARGET%.res"...
+    ECHO Creating Windows resource "res\out\%TARGET%.res"...
     windres.exe "res/%TARGET%.rc" -O coff --target=pe-i386 "res/out/%TARGET%.res"
-    IF NOT ERRORLEVEL 1 GOTO LINK_EXE
+    IF ERRORLEVEL 1 GOTO MAKE_NEXT_ARG
+    ECHO "res\out\%TARGET%.res": OK!
 
 :COMPILE_RESOURCE_OK
     SET OBJ_LIST=%OBJ_LIST% "res/out/%TARGET%.res"
-    GOTO MAKE_NEXT_ARG
 
 ::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
 
